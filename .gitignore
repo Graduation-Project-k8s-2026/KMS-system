@@ -28,3 +28,6 @@ go.work.sum
 # 이 프로젝트 전용 (KMS 로컬 데이터/빌드 산출물)
 /bin/
 data/
+
+# LLM
+CLAUDE.md

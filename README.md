@@ -32,13 +32,13 @@ Root Key (seal이 보호, 메모리에만 존재)
 
 ## 기술 스택
 
-- **언어**: Go 1.22+
+- **언어**: Go 1.23+
 - **HTTP 라우터**: [chi](https://github.com/go-chi/chi) — 나중 K8s 인증/인가 미들웨어 체이닝을 고려해 선정
 - **CI**: GitHub Actions (`.github/workflows/ci.yml`) — push/PR마다 build + vet + test 자동 실행
 
 ## 개발 환경 세팅
 
-1. Go 1.22+ 설치 (WSL/Linux 권장 — K8s 툴체인과의 호환성 때문)
+1. Go 1.23+ 설치 (WSL/Linux 권장 — K8s 툴체인과의 호환성 때문)
 2. 레포 clone
 ```bash
    git clone https://github.com/Graduation-Project-k8s-2026/KMS-system.git

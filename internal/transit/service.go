@@ -64,6 +64,29 @@ func (s *TransitService) Decrypt(name string, ciphertext string) ([]byte, error)
 	return kmscrypto.Open(kek, envelope, aad(name, version))
 }
 
+// Rewrap은 평문을 밖으로 노출하지 않고, ciphertext를 최신 버전 KEK로 다시
+// 암호화한다. 키 회전 후 옛 버전으로 암호화된 데이터를 최신 버전으로 "갈아입힐"
+// 때 쓴다 — 호출자는 새 암호문("kms:v{최신}:...")만 받을 뿐, 그 사이 평문이
+// 어디에도 반환되지 않는다.
+//
+// 구현은 기존 Decrypt로 원문을 복원한 뒤 곧바로 Encrypt로 다시 감싸는 형태다.
+// 복원한 평문은 이 함수 밖으로 절대 반환하지 않고, 재암호화에 쓴 즉시 defer로
+// 메모리에서 0으로 덮어 지운다.
+//
+// min_decryption_version 아래로 이미 떨어진 버전의 암호문은 내부 Decrypt
+// 단계에서부터 거부되므로 rewrap도 함께 불가능해진다 — 즉 "min_version을
+// 올리기 전에 옛 버전들의 rewrap을 끝내야 한다"는 순서가 이 구현만으로
+// 자연히 강제된다 (별도 검증 로직이 필요 없다).
+func (s *TransitService) Rewrap(name string, ciphertext string) (string, error) {
+	plaintext, err := s.Decrypt(name, ciphertext)
+	if err != nil {
+		return "", err
+	}
+	defer zeroBytes(plaintext)
+
+	return s.Encrypt(name, plaintext)
+}
+
 // zeroBytes는 슬라이스의 모든 바이트를 0으로 덮어써서, 더 이상 필요 없는 KEK가
 // 메모리에 평문으로 남는 시간을 최소화한다.
 func zeroBytes(b []byte) {

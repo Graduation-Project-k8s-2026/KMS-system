@@ -207,3 +207,63 @@ func TestAPI_FullFlow(t *testing.T) {
 		}
 	})
 }
+
+// TestAPI_Rewrap은 별도의 새 서버/키로 unseal -> 키생성 -> encrypt(v1) -> rotate
+// -> rewrap -> decrypt 흐름을 검증한다. TestAPI_FullFlow의 "app" 키는 이미
+// min_decryption_version=2로 올려둬서 v1 rewrap이 막힌 상태이므로, 이 테스트는
+// 독립된 키로 새로 시작한다.
+func TestAPI_Rewrap(t *testing.T) {
+	srv := newTestServer(t)
+
+	unsealResp := doJSON(t, http.MethodPost, srv.URL+"/v1/sys/unseal", nil)
+	unsealResp.Body.Close()
+
+	createResp := doJSON(t, http.MethodPost, srv.URL+"/v1/keys", map[string]any{"name": "rewrap-app"})
+	createResp.Body.Close()
+	if createResp.StatusCode != http.StatusCreated {
+		t.Fatalf("create status = %d, want %d", createResp.StatusCode, http.StatusCreated)
+	}
+
+	plaintext := base64.StdEncoding.EncodeToString([]byte("rewrap me via http"))
+	encResp := doJSON(t, http.MethodPost, srv.URL+"/v1/encrypt/rewrap-app", map[string]any{"plaintext": plaintext})
+	var encBody struct {
+		Ciphertext string `json:"ciphertext"`
+	}
+	decodeJSON(t, encResp, &encBody)
+	v1Ciphertext := encBody.Ciphertext
+	if !strings.HasPrefix(v1Ciphertext, "kms:v1:") {
+		t.Fatalf("ciphertext = %q, want prefix %q", v1Ciphertext, "kms:v1:")
+	}
+
+	rotResp := doJSON(t, http.MethodPost, srv.URL+"/v1/keys/rewrap-app/rotate", nil)
+	rotResp.Body.Close()
+	if rotResp.StatusCode != http.StatusOK {
+		t.Fatalf("rotate status = %d, want %d", rotResp.StatusCode, http.StatusOK)
+	}
+
+	rewrapResp := doJSON(t, http.MethodPost, srv.URL+"/v1/rewrap/rewrap-app", map[string]any{"ciphertext": v1Ciphertext})
+	defer rewrapResp.Body.Close()
+	if rewrapResp.StatusCode != http.StatusOK {
+		t.Fatalf("rewrap status = %d, want %d", rewrapResp.StatusCode, http.StatusOK)
+	}
+	var rewrapBody struct {
+		Ciphertext string `json:"ciphertext"`
+	}
+	decodeJSON(t, rewrapResp, &rewrapBody)
+	if !strings.HasPrefix(rewrapBody.Ciphertext, "kms:v2:") {
+		t.Fatalf("rewrap ciphertext = %q, want prefix %q", rewrapBody.Ciphertext, "kms:v2:")
+	}
+
+	decResp := doJSON(t, http.MethodPost, srv.URL+"/v1/decrypt/rewrap-app", map[string]any{"ciphertext": rewrapBody.Ciphertext})
+	defer decResp.Body.Close()
+	if decResp.StatusCode != http.StatusOK {
+		t.Fatalf("decrypt(rewrapped) status = %d, want %d", decResp.StatusCode, http.StatusOK)
+	}
+	var decBody struct {
+		Plaintext string `json:"plaintext"`
+	}
+	decodeJSON(t, decResp, &decBody)
+	if decBody.Plaintext != plaintext {
+		t.Fatalf("decrypted plaintext = %q, want %q", decBody.Plaintext, plaintext)
+	}
+}

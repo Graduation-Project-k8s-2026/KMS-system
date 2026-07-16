@@ -51,6 +51,7 @@ func NewRouter(deps Deps) http.Handler {
 
 		r.Post("/v1/encrypt/{name}", handleEncrypt(deps))
 		r.Post("/v1/decrypt/{name}", handleDecrypt(deps))
+		r.Post("/v1/rewrap/{name}", handleRewrap(deps))
 	})
 
 	return r
@@ -109,6 +110,14 @@ type decryptRequest struct {
 
 type decryptResponse struct {
 	Plaintext string `json:"plaintext"` // base64
+}
+
+type rewrapRequest struct {
+	Ciphertext string `json:"ciphertext"`
+}
+
+type rewrapResponse struct {
+	Ciphertext string `json:"ciphertext"`
 }
 
 // ---- /v1/sys ----
@@ -262,6 +271,28 @@ func handleDecrypt(deps Deps) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, http.StatusOK, decryptResponse{Plaintext: base64.StdEncoding.EncodeToString(plaintext)})
+	}
+}
+
+func handleRewrap(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		name := chi.URLParam(r, "name")
+
+		var req rewrapRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+			return
+		}
+
+		newCiphertext, err := deps.Transit.Rewrap(name, req.Ciphertext)
+		if err != nil {
+			// Decrypt와 동일한 이유로 fallback을 400으로 준다 — Rewrap 내부의
+			// 첫 단계가 Decrypt이므로, 여기서 나오는 미분류 에러 역시 대부분
+			// ciphertext 형식 오류이거나 인증 실패다.
+			writeError(w, err, http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, http.StatusOK, rewrapResponse{Ciphertext: newCiphertext})
 	}
 }
 

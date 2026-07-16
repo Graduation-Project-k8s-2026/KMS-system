@@ -1,3 +1,11 @@
+// envelope.go — 봉투 암호화(envelope encryption).
+//
+// aesgcm.go의 Encrypt/Decrypt를 재료로, "KEK로 DEK를 감싸고 DEK로 실제 데이터를
+// 암호화하는" 3단 키 계층 중 KEK→DEK→데이터 부분을 구현한다.
+// DEK는 Seal 호출마다 새로 생성되고, 다 쓰면 즉시 메모리에서 지워진다 — 저장되지
+// 않고 오직 암호문(envelope) 안에 "KEK로 잠긴 채로" 동봉되어 있다가, Open 때
+// 그 자리에서 복원된다.
+
 package crypto
 
 import (

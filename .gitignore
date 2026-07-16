@@ -30,4 +30,4 @@ go.work.sum
 data/
 
 # LLM
-CLAUDE.md
+CLAUDE.md/server

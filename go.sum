@@ -1,2 +1,4 @@
 github.com/go-chi/chi/v5 v5.3.1 h1:3j4HZLGZQ3JpMCrPJF/Jl3mYJfWLKBfNJ6quurUGCf8=
 github.com/go-chi/chi/v5 v5.3.1/go.mod h1:R+tYY2hNuVUUjxoPtqUdgBqevM9s9njzkTLutVsOCto=
+github.com/hashicorp/vault v1.18.5 h1:CYtixI0G+kD+y/Q2FnWdbAs03iOGbdcKyRrgmPvKaVE=
+github.com/hashicorp/vault v1.18.5/go.mod h1:DQFhtjaiBhhZNPPfNXrXRKTkejTzkOf1zJcrulPj07c=

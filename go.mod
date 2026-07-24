@@ -6,4 +6,4 @@ toolchain go1.23.4
 
 require github.com/go-chi/chi/v5 v5.3.1
 
-require github.com/hashicorp/vault v1.18.5 // indirect
+require github.com/hashicorp/vault v1.18.5

@@ -285,8 +285,9 @@ func (s *TPMSeal) Type() string {
 // 메모리에 평문으로 남는 시간을 최소화한다.
 //
 // (shamir.go에도 같은 기능의 zeroBytes가 있다. 두 구현체가 각각 다른 브랜치에서
-//  개발되어 서로 의존하지 않도록 이름을 분리해뒀다. 둘 다 main에 머지된 뒤
-//  하나로 합치는 게 좋다.)
+//
+//	개발되어 서로 의존하지 않도록 이름을 분리해뒀다. 둘 다 main에 머지된 뒤
+//	하나로 합치는 게 좋다.)
 func zeroBytesTPM(b []byte) {
 	for i := range b {
 		b[i] = 0

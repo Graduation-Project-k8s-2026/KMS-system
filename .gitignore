@@ -31,5 +31,6 @@ data/
 
 # LLM
 CLAUDE.md
+
 # 빌드 산출물 (go build ./cmd/server 결과)
 /server

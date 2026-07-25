@@ -1,0 +1,28 @@
+# git/CI 메타데이터 — 빌드에 필요 없음
+.git
+.github
+
+# 에디터/에이전트 설정 — 빌드에 필요 없음
+.claude
+
+# 문서 — 빌드에 필요 없음
+docs/
+README.md
+*.md
+
+# 로컬 개발 산출물 — 이미지에 절대 들어가면 안 됨
+data/
+bin/
+/server
+*.test
+*.out
+coverage.*
+*.coverprofile
+profile.cov
+
+# 로컬 환경변수 파일 — 이미지에 절대 들어가면 안 됨
+.env
+.env.local
+
+# go.mod / go.sum은 일부러 제외하지 않는다 — builder 스테이지의
+# `go mod download`와 의존성 해석에 반드시 필요하다.

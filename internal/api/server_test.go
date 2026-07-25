@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -441,5 +442,97 @@ func TestAPI_Init_CalledTwice_Returns409(t *testing.T) {
 	defer resp2.Body.Close()
 	if resp2.StatusCode != http.StatusConflict {
 		t.Fatalf("init (2nd) status = %d, want %d", resp2.StatusCode, http.StatusConflict)
+	}
+}
+
+// TestAPI_SealProfile_WorksWhileSealed는 GET /v1/sys/seal-profile이 unseal
+// 여부와 무관하게(sealed 가드 밖에 있으므로) 200과 현재 조립된 seal의
+// 타입을 반환하는지 확인한다. newTestServer는 barrier.Unseal()을 호출하지
+// 않은 상태로 서버를 만들어주므로, 이 테스트는 그 자체로 "sealed 상태에서도
+// 동작하는지"를 검증한다.
+func TestAPI_SealProfile_WorksWhileSealed(t *testing.T) {
+	srv := newTestServer(t) // dev seal, unseal 호출 안 함 -> 여전히 sealed
+
+	statusResp, err := http.Get(srv.URL + "/v1/sys/seal-status")
+	if err != nil {
+		t.Fatalf("GET seal-status failed: %v", err)
+	}
+	var status struct {
+		Sealed bool `json:"sealed"`
+	}
+	decodeJSON(t, statusResp, &status)
+	if !status.Sealed {
+		t.Fatal("precondition failed: server is already unsealed")
+	}
+
+	resp, err := http.Get(srv.URL + "/v1/sys/seal-profile")
+	if err != nil {
+		t.Fatalf("GET seal-profile failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("seal-profile status = %d, want %d (sealed guard should not apply here)", resp.StatusCode, http.StatusOK)
+	}
+	var profile struct {
+		Type string `json:"Type"`
+	}
+	decodeJSON(t, resp, &profile)
+	if profile.Type != "dev" {
+		t.Fatalf("profile.Type = %q, want %q", profile.Type, "dev")
+	}
+}
+
+// TestAPI_SealBenchmark_WorksWhileSealed_ReturnsFourResults는
+// GET /v1/sys/seal-benchmark도 sealed 상태에서 동작하며(sealed 가드 밖),
+// dev/shamir/tpm/k8s 4개 결과를 배열로 반환하는지 확인한다.
+func TestAPI_SealBenchmark_WorksWhileSealed_ReturnsFourResults(t *testing.T) {
+	srv := newTestServer(t) // sealed 상태 그대로
+
+	resp, err := http.Get(srv.URL + "/v1/sys/seal-benchmark")
+	if err != nil {
+		t.Fatalf("GET seal-benchmark failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("seal-benchmark status = %d, want %d (sealed guard should not apply here)", resp.StatusCode, http.StatusOK)
+	}
+
+	var results []struct {
+		Type string `json:"type"`
+	}
+	decodeJSON(t, resp, &results)
+	if len(results) != 4 {
+		t.Fatalf("len(results) = %d, want 4", len(results))
+	}
+}
+
+// TestAPI_StaticPages_ServeHTMLWhileSealed는 /, /dashboard, /console, /portal
+// 모두 sealed 가드 밖에 있어 sealed 상태에서도 200으로 HTML을 서빙하는지
+// 확인한다 — 페이지 자체는 항상 열려야 하고, 그 안의 JS가 sealed 여부에 따라
+// 알아서 기능을 켜고 끄는 구조이기 때문이다.
+func TestAPI_StaticPages_ServeHTMLWhileSealed(t *testing.T) {
+	srv := newTestServer(t) // sealed 상태 그대로
+
+	for _, path := range []string{"/", "/dashboard", "/console", "/portal"} {
+		t.Run(path, func(t *testing.T) {
+			resp, err := http.Get(srv.URL + path)
+			if err != nil {
+				t.Fatalf("GET %s failed: %v", path, err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("%s status = %d, want %d", path, resp.StatusCode, http.StatusOK)
+			}
+			if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+				t.Fatalf("%s Content-Type = %q, want text/html prefix", path, ct)
+			}
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				t.Fatalf("reading body failed: %v", err)
+			}
+			if len(body) == 0 {
+				t.Fatalf("%s returned empty body", path)
+			}
+		})
 	}
 }

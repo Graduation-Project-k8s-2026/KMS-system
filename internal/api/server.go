@@ -2,20 +2,31 @@
 package api
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/api/console"
+	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/api/dashboard"
+	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/api/home"
+	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/api/portal"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/barrier"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/keys"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/seal"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/transit"
 )
+
+// sealBenchmarkTimeout: GET /v1/sys/seal-benchmark 한 요청이 허용하는 최대
+// 시간. TPM 시뮬레이터 기동 등으로 시간이 걸릴 수 있어, 요청이 무한정
+// 걸리지 않도록 상한을 둔다.
+const sealBenchmarkTimeout = 30 * time.Second
 
 // Deps는 라우터가 필요로 하는 상위 계층 서비스들을 모은 것이다. 스케줄러
 // (rotation.RotationScheduler)는 백그라운드로만 동작하고 HTTP로 제어하지
@@ -53,11 +64,33 @@ func NewRouter(deps Deps) http.Handler {
 
 	// /v1/sys/*는 sealed 가드를 적용하지 않는다 — init/unseal 자체를 sealed
 	// 상태에서 호출해야 하므로, 여길 막으면 봉인을 영영 풀 수 없게 된다.
+	// seal-profile/seal-benchmark도 여기 같이 둔다: 이 둘은 Root Key나
+	// 암호화 연산과 무관한 진단용 정보라, sealed 상태에서도(오히려 sealed
+	// 상태일 때 더) "지금 이 서버가 어떤 unseal 절차를 밟아야 하는지",
+	// "이 환경에서 각 seal 방식이 어느 정도 시간이 걸리는지"를 확인할 수
+	// 있어야 한다.
 	r.Route("/v1/sys", func(r chi.Router) {
 		r.Get("/seal-status", handleSealStatus(deps, progress))
 		r.Post("/init", handleInit(deps))
 		r.Post("/unseal", handleUnseal(deps, progress))
+		r.Get("/seal-profile", handleSealProfile(deps))
+		r.Get("/seal-benchmark", handleSealBenchmark())
 	})
+
+	// /, /dashboard, /console, /portal 모두 sealed 가드 밖에 둔다 — 전부 정적
+	// HTML 페이지 자체는 항상 열려야 하고, 그 안의 바닐라 JS가 fetch로
+	// seal-status 등을 조회해 sealed 여부에 따라 알아서 기능을 켜고 끈다.
+	// 특히 /console은 init/unseal 조작 자체가 이 페이지의 핵심 기능이라,
+	// sealed 상태일 때야말로 열 수 있어야 한다(막아버리면 봉인을 풀
+	// 방법이 없어진다) — /v1/sys/*를 가드 밖에 둔 것과 같은 이유다. 루트
+	// 경로("/")는 이 셋으로 가는 진입점일 뿐이라 마찬가지로 항상 열려야 한다.
+	// (참고: r.Route("/v1/keys", ...) 안의 r.Get("/", ...)는 그 하위
+	// 라우터에 상대적인 "/"라서 실제로는 GET /v1/keys를 뜻한다 — 여기 최상위
+	// r.Get("/", ...)와 경로가 겹치지 않는다.)
+	r.Get("/", handleHome())
+	r.Get("/dashboard", handleDashboard())
+	r.Get("/console", handleConsole())
+	r.Get("/portal", handlePortal())
 
 	// 나머지 API(키 관리, 암복호화)는 Root Key가 메모리에 있어야만 의미가 있으므로
 	// r.Group으로 별도 스코프를 묶고 sealedGuard 미들웨어를 그 안에서만 적용한다.
@@ -342,6 +375,72 @@ func handleUnseal(deps Deps, progress *shamirProgress) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, http.StatusOK, unsealResponse{Sealed: false})
+	}
+}
+
+// handleSealProfile은 지금 서버가 실제로 조립한 seal의 특성(seal.SealProfile)을
+// 반환한다. deps.Seal은 항상 4개 구현체(DevSeal/ShamirSeal/TPMSeal/K8sSeal)
+// 중 하나이고, 이들은 모두 profile.go에서 Profile() 메서드를 갖고 있어
+// seal.Profiler를 만족한다 — 그래서 구체 타입을 하나하나 나열하는 타입
+// 스위치 대신, "Profile()이 있는가"만 확인하는 타입 단언 하나로 충분하다.
+func handleSealProfile(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		profiler, ok := deps.Seal.(seal.Profiler)
+		if !ok {
+			writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("seal type %T does not implement Profiler", deps.Seal))
+			return
+		}
+		writeJSON(w, http.StatusOK, profiler.Profile())
+	}
+}
+
+// handleSealBenchmark은 4개 Seal 구현체를 전부 새로 고립된 인스턴스로 만들어
+// Init/Unseal 시간을 측정한 결과(seal.RunBenchmark)를 반환한다. 지금 서버가
+// 실제로 어떤 seal로 조립됐는지와 무관하게 항상 4개 전부를 측정한다 —
+// RunBenchmark 자체의 설계 이유는 internal/seal/benchmark.go 참고.
+func handleSealBenchmark() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), sealBenchmarkTimeout)
+		defer cancel()
+
+		results := seal.RunBenchmark(ctx)
+		writeJSON(w, http.StatusOK, results)
+	}
+}
+
+// handleHome은 internal/api/home에 내장된 진입점(랜딩) HTML을 그대로
+// 서빙한다 — /dashboard, /console, /portal로 가는 안내 페이지다.
+func handleHome() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write(home.HTML)
+	}
+}
+
+// handleDashboard는 internal/api/dashboard에 내장된(go:embed) 정적 HTML을
+// 그대로 서빙한다.
+func handleDashboard() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write(dashboard.HTML)
+	}
+}
+
+// handleConsole은 internal/api/console에 내장된 운영자용 콘솔 HTML을
+// 그대로 서빙한다.
+func handleConsole() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write(console.HTML)
+	}
+}
+
+// handlePortal은 internal/api/portal에 내장된 고객용 포털 HTML을 그대로
+// 서빙한다.
+func handlePortal() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write(portal.HTML)
 	}
 }
 

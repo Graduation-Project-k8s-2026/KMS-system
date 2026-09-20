@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KMS 운영 콘솔</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f6f7f9;
+    --panel: #ffffff;
+    --panel-border: #e3e6eb;
+    --text: #1b1f27;
+    --text-dim: #6b7280;
+    --accent: #3563e9;
+    --accent-2: #0ea472;
+    --warn-bg: #fdf3d9;
+    --warn-border: #eecb7a;
+    --warn-text: #8a6116;
+    --ok: #128a57;
+    --bad: #c23434;
+    --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    padding: 2rem 1.5rem 4rem;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Pretendard, Roboto, sans-serif;
+    line-height: 1.5;
+  }
+
+  .wrap { max-width: 880px; margin: 0 auto; }
+
+  .home-link {
+    display: inline-block;
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    text-decoration: none;
+    margin-bottom: 0.6rem;
+  }
+  .home-link:hover { color: var(--accent); }
+
+  header h1 { font-size: 1.5rem; margin: 0 0 0.25rem; }
+  header p.sub { color: var(--text-dim); margin: 0 0 1.5rem; font-size: 0.9rem; }
+  header p.sub a { color: var(--accent); }
+
+  section { margin-bottom: 2.2rem; }
+  section h2 {
+    font-size: 1.05rem;
+    margin: 0 0 0.9rem;
+    color: var(--text);
+    border-bottom: 1px solid var(--panel-border);
+    padding-bottom: 0.5rem;
+  }
+
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    padding: 1.1rem 1.3rem;
+    box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+  }
+  .card + .card { margin-top: 1rem; }
+
+  .status-row { display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap; }
+  .status-badge {
+    display: inline-block;
+    padding: 0.3rem 0.9rem;
+    border-radius: 999px;
+    font-weight: 600;
+    font-size: 0.85rem;
+  }
+  .status-badge.sealed { background: #fbeaea; color: var(--bad); }
+  .status-badge.unsealed { background: #e3f6ed; color: var(--ok); }
+  .seal-type-label { font-family: var(--mono); color: var(--text-dim); font-size: 0.85rem; }
+
+  .step-label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-dim);
+    margin: 0 0 0.5rem;
+  }
+
+  form.inline-form { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; margin-top: 0.5rem; }
+
+  input[type="text"], input[type="number"] {
+    background: #fff;
+    border: 1px solid var(--panel-border);
+    border-radius: 6px;
+    padding: 0.45rem 0.6rem;
+    font-size: 0.88rem;
+    color: var(--text);
+    font-family: inherit;
+  }
+  input[type="text"].mono, input.share-field { font-family: var(--mono); }
+
+  button {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 0.5rem 1.1rem;
+    font-size: 0.85rem;
+    cursor: pointer;
+    font-weight: 600;
+  }
+  button:hover { opacity: 0.92; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  button.btn-sm { padding: 0.32rem 0.75rem; font-size: 0.78rem; }
+  button.btn-outline {
+    background: var(--panel);
+    color: var(--accent);
+    border: 1px solid var(--accent);
+  }
+  button.btn-outline:hover { background: #eef2ff; }
+
+  .warn-box {
+    background: var(--warn-bg);
+    border: 1px solid var(--warn-border);
+    color: var(--warn-text);
+    border-radius: 8px;
+    padding: 0.9rem 1.1rem;
+    margin-top: 0.9rem;
+    font-size: 0.88rem;
+  }
+  .warn-box strong { color: #6b4a0a; }
+
+  .share-list { list-style: none; padding: 0; margin: 0.7rem 0 0; }
+  .share-list li {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin-bottom: 0.5rem;
+  }
+  .share-list code {
+    background: #fff;
+    border: 1px solid var(--panel-border);
+    padding: 0.3rem 0.6rem;
+    border-radius: 6px;
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    word-break: break-all;
+    flex: 1;
+  }
+
+  .info-msg { color: var(--text-dim); font-size: 0.88rem; margin: 0.6rem 0 0; }
+  .error-msg { color: var(--bad); font-size: 0.88rem; margin: 0.6rem 0 0; }
+
+  .disabled-notice {
+    background: var(--panel);
+    border: 1px dashed var(--panel-border);
+    color: var(--text-dim);
+    padding: 1.1rem;
+    border-radius: 10px;
+    text-align: center;
+    font-size: 0.9rem;
+  }
+
+  table { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
+  th, td {
+    text-align: left;
+    padding: 0.55rem 0.7rem;
+    border-bottom: 1px solid var(--panel-border);
+  }
+  th {
+    color: var(--text-dim);
+    font-weight: 600;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  td.mono { font-family: var(--mono); color: var(--accent); font-weight: 600; }
+  td.empty { color: var(--text-dim); text-align: center; padding: 1.2rem 0; }
+  .table-wrap { overflow-x: auto; border: 1px solid var(--panel-border); border-radius: 10px; background: var(--panel); box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04); }
+  .table-wrap table { border: none; }
+  .table-wrap tr:last-child td { border-bottom: none; }
+  .actions { display: flex; gap: 0.5rem; white-space: nowrap; }
+
+  .config-row td { background: #fbfbfc; }
+  .config-form { display: flex; gap: 1.2rem; flex-wrap: wrap; align-items: flex-end; padding: 0.6rem 0; }
+  .config-form label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    font-size: 0.78rem;
+    color: var(--text-dim);
+  }
+  .config-form input { width: 140px; }
+
+  .create-key-form { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; margin-bottom: 0.5rem; }
+  .create-key-form input[name="name"] { width: 220px; }
+  .create-key-form input[name="autoRotate"] { width: 190px; }
+
+  .rotate-field { display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; }
+  .rotate-presets { display: flex; gap: 0.35rem; }
+  button.rotate-preset { padding: 0.3rem 0.6rem; font-size: 0.74rem; }
+
+  .field-hint {
+    color: var(--text-dim);
+    font-size: 0.78rem;
+    margin: 0 0 1rem;
+  }
+  .field-hint-sm {
+    color: var(--text-dim);
+    font-size: 0.72rem;
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: normal;
+    margin-left: 0.3rem;
+  }
+
+  .badge {
+    display: inline-block;
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-family: var(--mono);
+  }
+  .badge.yes { background: #e3f6ed; color: var(--ok); }
+  .badge.no  { background: #fbeaea; color: var(--bad); }
+
+  .profile-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 0.9rem 1.5rem;
+  }
+  .profile-item .label {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-dim);
+    margin-bottom: 0.2rem;
+  }
+  .profile-item .value { font-size: 0.95rem; font-family: var(--mono); }
+  .profile-notes {
+    margin-top: 1rem;
+    padding-top: 0.9rem;
+    border-top: 1px solid var(--panel-border);
+    color: var(--text-dim);
+    font-size: 0.85rem;
+  }
+
+  footer { margin-top: 3rem; color: var(--text-dim); font-size: 0.78rem; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <a class="home-link" href="/">← 홈으로</a>
+    <h1>KMS 운영 콘솔</h1>
+    <p class="sub">이 KMS 서버를 초기화(init)/봉인 해제(unseal)하고 키를 관리하는 운영자용 화면입니다. · <a href="/dashboard">Seal 비교 대시보드</a></p>
+  </header>
+
+  <section>
+    <h2>1. Seal 상태</h2>
+    <div class="card">
+      <div class="status-row">
+        <span id="seal-badge" class="status-badge">확인 중…</span>
+        <span class="seal-type-label">seal_type: <strong id="seal-type-label">-</strong></span>
+      </div>
+
+      <div id="init-area" style="display:none; margin-top:1.1rem;">
+        <p class="step-label">초기화 (서버 최초 구동 시 1회)</p>
+        <button type="button" id="init-btn">초기화 (Init)</button>
+        <div id="init-result"></div>
+      </div>
+
+      <div id="unseal-area" style="display:none; margin-top:1.3rem;">
+        <p class="step-label">Unseal</p>
+
+        <div id="simple-unseal-form">
+          <button type="button" id="simple-unseal-btn">Unseal</button>
+        </div>
+
+        <form id="shamir-unseal-form" style="display:none;">
+          <div id="shamir-progress" class="info-msg" style="margin-bottom:0.5rem;"></div>
+          <div class="inline-form">
+            <input type="text" id="share-input" class="share-field" placeholder="조각(share) 값을 붙여넣으세요" autocomplete="off">
+            <button type="submit">조각 제출</button>
+          </div>
+        </form>
+
+        <div id="unseal-result"></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>2. 키 관리</h2>
+
+    <div id="keys-disabled-notice" class="disabled-notice" style="display:none;">
+      서버가 아직 봉인(sealed)된 상태입니다. 위에서 Unseal을 완료해야 키를 조회/생성/관리할 수 있습니다.
+    </div>
+
+    <div id="keys-content" style="display:none;">
+      <form class="create-key-form" id="create-key-form">
+        <input type="text" name="name" placeholder="새 키 이름" required>
+        <div class="rotate-field">
+          <input type="number" name="autoRotate" min="0" placeholder="권장: 90일 (7776000초)">
+          <div class="rotate-presets">
+            <button type="button" class="btn-sm btn-outline rotate-preset" data-seconds="7776000">90일</button>
+            <button type="button" class="btn-sm btn-outline rotate-preset" data-seconds="2592000">30일</button>
+            <button type="button" class="btn-sm btn-outline rotate-preset" data-seconds="0">회전 안 함</button>
+          </div>
+        </div>
+        <button type="submit">키 생성</button>
+      </form>
+      <p class="field-hint">자동회전 주기는 초 단위로 입력합니다. AWS KMS 등 업계 관례상 90일을 일반적인 기본 권장값으로 씁니다.</p>
+      <div id="create-key-result"></div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>이름</th>
+              <th>최신 버전</th>
+              <th>Min Decryption Version</th>
+              <th>자동 회전</th>
+              <th>작업</th>
+            </tr>
+          </thead>
+          <tbody id="keys-tbody">
+            <tr><td colspan="5" class="empty">불러오는 중…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>3. 현재 Seal 특성 (참고용)</h2>
+    <div id="profile-card" class="card">
+      <div class="info-msg">불러오는 중…</div>
+    </div>
+  </section>
+
+  <footer>KMS-system · 운영자 콘솔</footer>
+</div>
+
+<script>
+function escapeHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s == null ? '' : String(s);
+  return d.innerHTML;
+}
+
+function badge(value) {
+  return `<span class="badge ${value ? 'yes' : 'no'}">${value ? 'YES' : 'NO'}</span>`;
+}
+
+async function api(method, path, body) {
+  const opts = { method, headers: {} };
+  if (body !== undefined) {
+    opts.headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(body);
+  }
+  const res = await fetch(path, opts);
+  let data = null;
+  try { data = await res.json(); } catch (e) { /* 본문 없음 */ }
+  return { ok: res.ok, status: res.status, data };
+}
+
+function attachCopyButtons(root) {
+  root.querySelectorAll('.copy-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      navigator.clipboard.writeText(btn.dataset.copy).then(() => {
+        const original = btn.textContent;
+        btn.textContent = '복사됨';
+        setTimeout(() => { btn.textContent = original; }, 1500);
+      });
+    });
+  });
+}
+
+// ---- Seal 상태 / Init / Unseal ----
+
+async function refreshSealStatus() {
+  const { ok, data } = await api('GET', '/v1/sys/seal-status');
+  if (!ok || !data) return;
+  renderSealStatus(data);
+
+  if (!data.sealed) {
+    loadKeys();
+  }
+}
+
+function renderSealStatus(status) {
+  const badgeEl = document.getElementById('seal-badge');
+  const typeEl = document.getElementById('seal-type-label');
+  const initArea = document.getElementById('init-area');
+  const unsealArea = document.getElementById('unseal-area');
+  const keysNotice = document.getElementById('keys-disabled-notice');
+  const keysContent = document.getElementById('keys-content');
+
+  typeEl.textContent = status.seal_type;
+
+  if (status.sealed) {
+    badgeEl.textContent = 'Sealed';
+    badgeEl.className = 'status-badge sealed';
+    initArea.style.display = '';
+    unsealArea.style.display = '';
+    keysNotice.style.display = '';
+    keysContent.style.display = 'none';
+
+    const isShamir = status.seal_type === 'shamir';
+    document.getElementById('shamir-unseal-form').style.display = isShamir ? '' : 'none';
+    document.getElementById('simple-unseal-form').style.display = isShamir ? 'none' : '';
+    document.getElementById('shamir-progress').textContent =
+      isShamir && status.progress ? `${status.progress}개 조각 제출됨` : '';
+  } else {
+    badgeEl.textContent = 'Unsealed';
+    badgeEl.className = 'status-badge unsealed';
+    // Unsealed 상태에서는 init/unseal 조작이 더 필요 없으므로 접어 보여준다.
+    initArea.style.display = 'none';
+    unsealArea.style.display = 'none';
+    keysNotice.style.display = 'none';
+    keysContent.style.display = '';
+  }
+}
+
+document.getElementById('init-btn').addEventListener('click', async () => {
+  const out = document.getElementById('init-result');
+  out.innerHTML = '<p class="info-msg">처리 중…</p>';
+
+  const { ok, status, data } = await api('POST', '/v1/sys/init', {});
+
+  if (status === 409) {
+    out.innerHTML = '<p class="info-msg">이미 초기화된 상태입니다. 아래 Unseal을 진행하세요.</p>';
+    refreshSealStatus();
+    return;
+  }
+  if (!ok) {
+    out.innerHTML = `<p class="error-msg">초기화 실패: ${escapeHtml(data && data.error || status)}</p>`;
+    return;
+  }
+
+  let html = `<p class="info-msg">${escapeHtml(data.message)}</p>`;
+  if (data.shares && data.shares.length) {
+    html += `
+      <div class="warn-box">
+        <strong>⚠ 이 조각들은 지금 한 번만 표시되며 서버에 저장되지 않습니다.</strong>
+        <p style="margin:0.4rem 0 0;">지금 안전한 곳에 각각 복사해 보관하세요. 이 화면을 벗어나면 다시 볼 수 없습니다.</p>
+        <ul class="share-list">
+          ${data.shares.map(s => `<li><code>${escapeHtml(s)}</code><button type="button" class="btn-sm btn-outline copy-btn" data-copy="${escapeHtml(s)}">복사</button></li>`).join('')}
+        </ul>
+      </div>`;
+  }
+  out.innerHTML = html;
+  attachCopyButtons(out);
+  refreshSealStatus();
+});
+
+document.getElementById('simple-unseal-btn').addEventListener('click', async () => {
+  const out = document.getElementById('unseal-result');
+  out.innerHTML = '<p class="info-msg">처리 중…</p>';
+
+  const { ok, data, status } = await api('POST', '/v1/sys/unseal', {});
+  if (!ok) {
+    out.innerHTML = `<p class="error-msg">Unseal 실패: ${escapeHtml(data && data.error || status)}</p>`;
+    return;
+  }
+  out.innerHTML = '';
+  refreshSealStatus();
+});
+
+document.getElementById('shamir-unseal-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const input = document.getElementById('share-input');
+  const share = input.value.trim();
+  if (!share) return;
+
+  const out = document.getElementById('unseal-result');
+  out.innerHTML = '<p class="info-msg">처리 중…</p>';
+
+  const { ok, data, status } = await api('POST', '/v1/sys/unseal', { share });
+  if (!ok) {
+    out.innerHTML = `<p class="error-msg">조각 제출 실패: ${escapeHtml(data && data.error || status)}</p>`;
+    return;
+  }
+  input.value = '';
+  out.innerHTML = '';
+  refreshSealStatus();
+});
+
+// ---- 키 관리 ----
+
+async function loadKeys() {
+  const tbody = document.getElementById('keys-tbody');
+  const { ok, data } = await api('GET', '/v1/keys');
+  if (!ok || !data) {
+    tbody.innerHTML = '<tr><td colspan="5" class="empty">키 목록을 불러오지 못했습니다</td></tr>';
+    return;
+  }
+  if (!data.keys || data.keys.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" class="empty">등록된 키가 없습니다</td></tr>';
+    return;
+  }
+
+  const metas = await Promise.all(
+    data.keys.map(name => api('GET', `/v1/keys/${encodeURIComponent(name)}`))
+  );
+  tbody.innerHTML = metas
+    .filter(r => r.ok && r.data)
+    .map(r => renderKeyRow(r.data))
+    .join('');
+  attachKeyRowHandlers();
+}
+
+function renderKeyRow(meta) {
+  const autoRotate = meta.AutoRotatePeriodSec > 0 ? `${meta.AutoRotatePeriodSec}초` : '수동';
+  return `
+    <tr class="key-row" data-name="${escapeHtml(meta.Name)}">
+      <td class="mono">${escapeHtml(meta.Name)}</td>
+      <td>v${meta.LatestVersion}</td>
+      <td>v${meta.MinDecryptionVersion}</td>
+      <td>${autoRotate}</td>
+      <td class="actions">
+        <button type="button" class="btn-sm rotate-btn">회전</button>
+        <button type="button" class="btn-sm btn-outline config-btn">설정</button>
+      </td>
+    </tr>
+    <tr class="config-row" style="display:none">
+      <td colspan="5">
+        <div class="config-form">
+          <label>Min Decryption Version
+            <input type="number" min="1" max="${meta.LatestVersion}" class="cfg-min-version" placeholder="${meta.MinDecryptionVersion}">
+          </label>
+          <label>자동 회전 주기(초) <span class="field-hint-sm">권장: 90일(7776000초)</span>
+            <div class="rotate-field">
+              <input type="number" min="0" class="cfg-auto-rotate" placeholder="${meta.AutoRotatePeriodSec}">
+              <div class="rotate-presets">
+                <button type="button" class="btn-sm btn-outline rotate-preset" data-seconds="7776000">90일</button>
+                <button type="button" class="btn-sm btn-outline rotate-preset" data-seconds="2592000">30일</button>
+                <button type="button" class="btn-sm btn-outline rotate-preset" data-seconds="0">회전 안 함</button>
+              </div>
+            </div>
+          </label>
+          <button type="button" class="btn-sm save-config-btn">저장</button>
+        </div>
+        <div class="config-result"></div>
+      </td>
+    </tr>`;
+}
+
+function attachKeyRowHandlers() {
+  document.querySelectorAll('.rotate-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const name = btn.closest('tr').dataset.name;
+      btn.disabled = true;
+      const { ok, data, status } = await api('POST', `/v1/keys/${encodeURIComponent(name)}/rotate`, {});
+      btn.disabled = false;
+      if (!ok) {
+        alert(`회전 실패: ${data && data.error || status}`);
+        return;
+      }
+      loadKeys();
+    });
+  });
+
+  document.querySelectorAll('.config-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const row = btn.closest('tr').nextElementSibling;
+      row.style.display = row.style.display === 'none' ? '' : 'none';
+    });
+  });
+
+  document.querySelectorAll('.save-config-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const configRow = btn.closest('tr');
+      const name = configRow.previousElementSibling.dataset.name;
+      const minVal = configRow.querySelector('.cfg-min-version').value;
+      const rotateVal = configRow.querySelector('.cfg-auto-rotate').value;
+      const resultEl = configRow.querySelector('.config-result');
+
+      const body = {};
+      if (minVal !== '') body.min_decryption_version = parseInt(minVal, 10);
+      if (rotateVal !== '') body.auto_rotate_period_sec = parseInt(rotateVal, 10);
+      if (Object.keys(body).length === 0) {
+        resultEl.innerHTML = '<p class="info-msg">변경할 값을 입력하세요.</p>';
+        return;
+      }
+
+      const { ok, data, status } = await api('POST', `/v1/keys/${encodeURIComponent(name)}/config`, body);
+      if (!ok) {
+        resultEl.innerHTML = `<p class="error-msg">저장 실패: ${escapeHtml(data && data.error || status)}</p>`;
+        return;
+      }
+      resultEl.innerHTML = '';
+      loadKeys();
+    });
+  });
+
+  wireRotatePresets(document.getElementById('keys-tbody'));
+}
+
+// wireRotatePresets는 "90일"/"30일"/"회전 안 함" 버튼을 눌렀을 때, 같은
+// .rotate-field 안의 숫자 입력창에 해당 초 값을 채워 넣는다. 생성 폼의
+// 버튼들은(페이지에 한 번만 존재) 페이지 로드 시 한 번만 연결하고, 키 목록
+// 행마다 있는 버튼들은 목록이 다시 그려질 때마다(innerHTML로 완전히
+// 교체되므로) attachKeyRowHandlers에서 다시 연결한다.
+function wireRotatePresets(root) {
+  root.querySelectorAll('.rotate-preset').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const input = btn.closest('.rotate-field').querySelector('input[type="number"]');
+      input.value = btn.dataset.seconds;
+    });
+  });
+}
+
+document.getElementById('create-key-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const name = form.name.value.trim();
+  const autoRotate = form.autoRotate.value;
+  if (!name) return;
+
+  const body = { name };
+  if (autoRotate !== '') body.auto_rotate_period_sec = parseInt(autoRotate, 10);
+
+  const out = document.getElementById('create-key-result');
+  const { ok, data, status } = await api('POST', '/v1/keys', body);
+  if (!ok) {
+    out.innerHTML = `<p class="error-msg">키 생성 실패: ${escapeHtml(data && data.error || status)}</p>`;
+    return;
+  }
+  out.innerHTML = '';
+  form.reset();
+  loadKeys();
+});
+
+// ---- Seal 특성(참고용) ----
+
+async function loadSealProfile() {
+  const el = document.getElementById('profile-card');
+  const { ok, data } = await api('GET', '/v1/sys/seal-profile');
+  if (!ok || !data) {
+    el.innerHTML = '<div class="error-msg">seal-profile을 불러오지 못했습니다</div>';
+    return;
+  }
+  el.innerHTML = `
+    <div class="profile-grid">
+      <div class="profile-item"><div class="label">Seal Type</div><div class="value">${escapeHtml(data.Type)}</div></div>
+      <div class="profile-item"><div class="label">Requires Humans</div><div class="value">${badge(data.RequiresHumans)}</div></div>
+      <div class="profile-item"><div class="label">Human Count</div><div class="value">${data.HumanCount}</div></div>
+      <div class="profile-item"><div class="label">SPOF</div><div class="value">${badge(data.SinglePointOfFailure)}</div></div>
+      <div class="profile-item"><div class="label">Hardware Dependent</div><div class="value">${badge(data.HardwareDependent)}</div></div>
+      <div class="profile-item"><div class="label">Auto Unseal</div><div class="value">${badge(data.AutoUnsealCapable)}</div></div>
+    </div>
+    <div class="profile-notes">${escapeHtml(data.Notes)}</div>
+  `;
+}
+
+wireRotatePresets(document.getElementById('create-key-form'));
+refreshSealStatus();
+loadSealProfile();
+</script>
+</body>
+</html>

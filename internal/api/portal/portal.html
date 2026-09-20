@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KMS 포털</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f6f7f9;
+    --panel: #ffffff;
+    --panel-border: #e3e6eb;
+    --text: #1b1f27;
+    --text-dim: #6b7280;
+    --accent: #3563e9;
+    --accent-2: #0ea472;
+    --warn-bg: #fdf3d9;
+    --warn-border: #eecb7a;
+    --warn-text: #8a6116;
+    --ok: #128a57;
+    --bad: #c23434;
+    --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    padding: 2rem 1.5rem 4rem;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Pretendard, Roboto, sans-serif;
+    line-height: 1.5;
+  }
+
+  .wrap { max-width: 720px; margin: 0 auto; }
+
+  .home-link {
+    display: inline-block;
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    text-decoration: none;
+    margin-bottom: 0.6rem;
+  }
+  .home-link:hover { color: var(--accent); }
+
+  header h1 { font-size: 1.5rem; margin: 0 0 0.25rem; }
+  header p.sub { color: var(--text-dim); margin: 0 0 1.5rem; font-size: 0.92rem; }
+
+  .maintenance {
+    background: var(--warn-bg);
+    border: 1px solid var(--warn-border);
+    color: var(--warn-text);
+    border-radius: 10px;
+    padding: 1.1rem 1.3rem;
+    margin-bottom: 1.6rem;
+    font-size: 0.92rem;
+  }
+  .maintenance strong { color: #6b4a0a; }
+
+  .explain-box {
+    background: #eef3ff;
+    border: 1px solid #c9d9fb;
+    color: var(--text);
+    border-radius: 8px;
+    padding: 0.9rem 1.1rem;
+    margin-bottom: 0.9rem;
+    font-size: 0.86rem;
+  }
+  .explain-box ol { margin: 0.5rem 0 0; padding-left: 1.2rem; }
+  .explain-box li { margin-bottom: 0.25rem; }
+
+  section { margin-bottom: 1.8rem; }
+  section h2 {
+    font-size: 1rem;
+    margin: 0 0 0.5rem;
+    color: var(--text);
+  }
+  section p.desc {
+    color: var(--text-dim);
+    font-size: 0.85rem;
+    margin: 0 0 0.8rem;
+  }
+
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    padding: 1.2rem 1.4rem;
+    box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+  }
+
+  label {
+    display: block;
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    margin-bottom: 0.35rem;
+  }
+
+  input[type="text"], textarea {
+    width: 100%;
+    background: #fff;
+    border: 1px solid var(--panel-border);
+    border-radius: 8px;
+    padding: 0.6rem 0.7rem;
+    font-size: 0.9rem;
+    color: var(--text);
+    font-family: inherit;
+  }
+  textarea { resize: vertical; min-height: 4.5rem; }
+  input.mono, textarea.mono { font-family: var(--mono); font-size: 0.82rem; }
+
+  .field { margin-bottom: 0.9rem; }
+
+  button {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 0.55rem 1.2rem;
+    font-size: 0.88rem;
+    cursor: pointer;
+    font-weight: 600;
+  }
+  button:hover { opacity: 0.92; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  button.btn-sm {
+    padding: 0.3rem 0.7rem;
+    font-size: 0.76rem;
+    background: var(--panel);
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    font-weight: 600;
+  }
+
+  .result-box {
+    margin-top: 0.9rem;
+    background: #f8fafc;
+    border: 1px solid var(--panel-border);
+    border-radius: 8px;
+    padding: 0.8rem 0.9rem;
+  }
+  .result-box .result-label {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-dim);
+    margin-bottom: 0.4rem;
+  }
+  .result-box .result-value {
+    font-family: var(--mono);
+    font-size: 0.82rem;
+    word-break: break-all;
+    white-space: pre-wrap;
+  }
+  .result-box .result-actions { margin-top: 0.6rem; }
+
+  .info-msg { color: var(--text-dim); font-size: 0.85rem; margin: 0.6rem 0 0; }
+  .error-msg { color: var(--bad); font-size: 0.85rem; margin: 0.6rem 0 0; }
+
+  .shared-key-card { margin-bottom: 1.6rem; }
+
+  footer { margin-top: 3rem; color: var(--text-dim); font-size: 0.78rem; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <a class="home-link" href="/">← 홈으로</a>
+    <h1>KMS 포털</h1>
+    <p class="sub">이미 만들어진 키로 데이터를 암호화·복호화합니다. 키를 새로 만들거나 서버를 여는 기능은 여기 없습니다.</p>
+  </header>
+
+  <div id="maintenance-notice" class="maintenance" style="display:none;">
+    <strong>현재 서비스 점검 중입니다.</strong> 잠시 후 다시 시도해 주세요.
+  </div>
+
+  <div id="app-content">
+    <section class="shared-key-card">
+      <h2>사용할 키</h2>
+      <p class="desc">암호화에 사용할 키 이름을 선택하거나 직접 입력하세요.</p>
+      <div class="card">
+        <div class="field">
+          <label for="key-name">키 이름</label>
+          <!--
+            datalist로 채워지는 목록은 어디까지나 "편의"다. 실제 서비스에서는
+            사용자가 자신에게 배정된 키 이름 하나만 알고 있을 뿐, 서버에 있는
+            전체 키 목록을 볼 권한이 없을 수도 있다 — 그래서 GET /v1/keys가
+            실패하거나 빈 목록을 반환해도 이 입력창 자체는 계속 자유 입력으로
+            동작해야 한다(그래서 select가 아니라 input+datalist를 쓴다).
+          -->
+          <input type="text" id="key-name" class="mono" list="key-name-list" placeholder="예: app-secret" autocomplete="off">
+          <datalist id="key-name-list"></datalist>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>암호화</h2>
+      <p class="desc">평문을 입력하면 이 키의 최신 버전으로 암호화합니다.</p>
+      <div class="card">
+        <div class="field">
+          <label for="encrypt-plaintext">평문</label>
+          <textarea id="encrypt-plaintext" placeholder="암호화할 내용을 입력하세요"></textarea>
+        </div>
+        <button type="button" id="encrypt-btn">암호화</button>
+        <div id="encrypt-result"></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>복호화</h2>
+      <p class="desc">이 키로 암호화된 암호문(kms:v...)을 붙여넣으면 원래 내용을 보여줍니다.</p>
+      <div class="card">
+        <div class="field">
+          <label for="decrypt-ciphertext">암호문</label>
+          <textarea id="decrypt-ciphertext" class="mono" placeholder="kms:v1:..."></textarea>
+        </div>
+        <button type="button" id="decrypt-btn">복호화</button>
+        <div id="decrypt-result"></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>재암호화 (Rewrap)</h2>
+      <div class="explain-box">
+        <p style="margin:0;">관리자가 키를 회전시키면, 예전 버전으로 암호화된 데이터는 계속 복호화는 되지만 최신 버전이 아닙니다. 재암호화(Rewrap)는 평문을 노출하지 않고 암호문을 최신 버전으로 갱신합니다.</p>
+        <ol>
+          <li>암호화 패널에서 얻은 암호문을 아래에 붙여넣으세요</li>
+          <li>'재암호화' 클릭 → 최신 버전(kms:v{n}:...)의 새 암호문을 받습니다</li>
+          <li>이전 암호문 대신 이 새 암호문을 사용하세요</li>
+        </ol>
+      </div>
+      <div class="card">
+        <div class="field">
+          <label for="rewrap-ciphertext">암호문</label>
+          <textarea id="rewrap-ciphertext" class="mono" placeholder="kms:v1:..."></textarea>
+        </div>
+        <button type="button" id="rewrap-btn">재암호화</button>
+        <div id="rewrap-result"></div>
+      </div>
+    </section>
+  </div>
+
+  <footer>KMS-system · 포털</footer>
+</div>
+
+<script>
+function escapeHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s == null ? '' : String(s);
+  return d.innerHTML;
+}
+
+async function api(method, path, body) {
+  const opts = { method, headers: {} };
+  if (body !== undefined) {
+    opts.headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(body);
+  }
+  const res = await fetch(path, opts);
+  let data = null;
+  try { data = await res.json(); } catch (e) { /* 본문 없음 */ }
+  return { ok: res.ok, status: res.status, data };
+}
+
+// btoa/atob는 원래 라틴-1 범위 문자열만 다룰 수 있어서, 한글 등 멀티바이트
+// 문자를 그대로 넣으면 예외가 난다. TextEncoder/TextDecoder로 먼저 UTF-8
+// 바이트로 바꾼 뒤 그 바이트를 btoa/atob에 넘기면 어떤 언어의 텍스트든
+// 안전하게 base64로 주고받을 수 있다.
+function utf8ToBase64(str) {
+  const bytes = new TextEncoder().encode(str);
+  let binary = '';
+  bytes.forEach(b => { binary += String.fromCharCode(b); });
+  return btoa(binary);
+}
+function base64ToUtf8(b64) {
+  const binary = atob(b64);
+  const bytes = Uint8Array.from(binary, c => c.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
+
+function attachCopyButton(container, textToCopy) {
+  const btn = container.querySelector('.copy-btn');
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    navigator.clipboard.writeText(textToCopy).then(() => {
+      const original = btn.textContent;
+      btn.textContent = '복사됨';
+      setTimeout(() => { btn.textContent = original; }, 1500);
+    });
+  });
+}
+
+function keyName() {
+  return document.getElementById('key-name').value.trim();
+}
+
+function requireKeyName(resultEl) {
+  const name = keyName();
+  if (!name) {
+    resultEl.innerHTML = '<p class="error-msg">먼저 사용할 키 이름을 입력하세요.</p>';
+    return null;
+  }
+  return name;
+}
+
+// ---- sealed 여부에 따라 전체 기능 켜고 끄기 ----
+
+async function checkSealedAndToggle() {
+  const { ok, data } = await api('GET', '/v1/sys/seal-status');
+  const sealed = !ok || !data || data.sealed;
+  document.getElementById('maintenance-notice').style.display = sealed ? '' : 'none';
+  document.getElementById('app-content').style.display = sealed ? 'none' : '';
+  if (!sealed) {
+    loadKeyNameSuggestions();
+  }
+}
+
+async function loadKeyNameSuggestions() {
+  // 목록을 못 가져와도(권한 없음 등) 조용히 무시한다 — 이 입력창은 어차피
+  // 자유 입력이 기본이므로, 추천 목록이 없다고 기능이 막히면 안 된다.
+  const { ok, data } = await api('GET', '/v1/keys');
+  if (!ok || !data || !data.keys) return;
+  const list = document.getElementById('key-name-list');
+  list.innerHTML = data.keys.map(name => `<option value="${escapeHtml(name)}"></option>`).join('');
+}
+
+// ---- 암호화 ----
+
+document.getElementById('encrypt-btn').addEventListener('click', async () => {
+  const resultEl = document.getElementById('encrypt-result');
+  const name = requireKeyName(resultEl);
+  if (!name) return;
+
+  const plaintext = document.getElementById('encrypt-plaintext').value;
+  if (!plaintext) {
+    resultEl.innerHTML = '<p class="error-msg">암호화할 내용을 입력하세요.</p>';
+    return;
+  }
+
+  resultEl.innerHTML = '<p class="info-msg">암호화 중…</p>';
+  const { ok, data, status } = await api('POST', `/v1/encrypt/${encodeURIComponent(name)}`, {
+    plaintext: utf8ToBase64(plaintext),
+  });
+  if (!ok) {
+    resultEl.innerHTML = `<p class="error-msg">암호화 실패: ${escapeHtml(data && data.error || status)}</p>`;
+    return;
+  }
+
+  resultEl.innerHTML = `
+    <div class="result-box">
+      <div class="result-label">암호문</div>
+      <div class="result-value">${escapeHtml(data.ciphertext)}</div>
+      <div class="result-actions"><button type="button" class="btn-sm copy-btn">복사</button></div>
+    </div>`;
+  attachCopyButton(resultEl, data.ciphertext);
+});
+
+// ---- 복호화 ----
+
+document.getElementById('decrypt-btn').addEventListener('click', async () => {
+  const resultEl = document.getElementById('decrypt-result');
+  const name = requireKeyName(resultEl);
+  if (!name) return;
+
+  const ciphertext = document.getElementById('decrypt-ciphertext').value.trim();
+  if (!ciphertext) {
+    resultEl.innerHTML = '<p class="error-msg">복호화할 암호문을 입력하세요.</p>';
+    return;
+  }
+
+  resultEl.innerHTML = '<p class="info-msg">복호화 중…</p>';
+  const { ok, data, status } = await api('POST', `/v1/decrypt/${encodeURIComponent(name)}`, { ciphertext });
+  if (!ok) {
+    resultEl.innerHTML = `<p class="error-msg">복호화 실패: ${escapeHtml(data && data.error || status)}</p>`;
+    return;
+  }
+
+  let plaintext;
+  try {
+    plaintext = base64ToUtf8(data.plaintext);
+  } catch (e) {
+    plaintext = '(표시할 수 없는 내용입니다)';
+  }
+
+  resultEl.innerHTML = `
+    <div class="result-box">
+      <div class="result-label">평문</div>
+      <div class="result-value">${escapeHtml(plaintext)}</div>
+      <div class="result-actions"><button type="button" class="btn-sm copy-btn">복사</button></div>
+    </div>`;
+  attachCopyButton(resultEl, plaintext);
+});
+
+// ---- 재암호화(Rewrap) ----
+
+document.getElementById('rewrap-btn').addEventListener('click', async () => {
+  const resultEl = document.getElementById('rewrap-result');
+  const name = requireKeyName(resultEl);
+  if (!name) return;
+
+  const ciphertext = document.getElementById('rewrap-ciphertext').value.trim();
+  if (!ciphertext) {
+    resultEl.innerHTML = '<p class="error-msg">재암호화할 암호문을 입력하세요.</p>';
+    return;
+  }
+
+  resultEl.innerHTML = '<p class="info-msg">재암호화 중…</p>';
+  const { ok, data, status } = await api('POST', `/v1/rewrap/${encodeURIComponent(name)}`, { ciphertext });
+  if (!ok) {
+    resultEl.innerHTML = `<p class="error-msg">재암호화 실패: ${escapeHtml(data && data.error || status)}</p>`;
+    return;
+  }
+
+  resultEl.innerHTML = `
+    <div class="result-box">
+      <div class="result-label">새 암호문</div>
+      <div class="result-value">${escapeHtml(data.ciphertext)}</div>
+      <div class="result-actions"><button type="button" class="btn-sm copy-btn">복사</button></div>
+    </div>`;
+  attachCopyButton(resultEl, data.ciphertext);
+});
+
+checkSealedAndToggle();
+</script>
+</body>
+</html>

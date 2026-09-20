@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KMS Seal 비교 대시보드</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f6f7f9;
+    --panel: #ffffff;
+    --panel-border: #e3e6eb;
+    --text: #1b1f27;
+    --text-dim: #6b7280;
+    --accent: #3563e9;
+    --accent-2: #0ea472;
+    --warn-bg: #fdf3d9;
+    --warn-border: #eecb7a;
+    --warn-text: #8a6116;
+    --ok: #128a57;
+    --bad: #c23434;
+    --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    padding: 2rem 1.5rem 4rem;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Pretendard, Roboto, sans-serif;
+    line-height: 1.5;
+  }
+
+  .wrap { max-width: 960px; margin: 0 auto; }
+
+  .home-link {
+    display: inline-block;
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    text-decoration: none;
+    margin-bottom: 0.6rem;
+  }
+  .home-link:hover { color: var(--accent); }
+
+  header h1 {
+    font-size: 1.5rem;
+    margin: 0 0 0.25rem;
+  }
+  header p.sub {
+    color: var(--text-dim);
+    margin: 0 0 1.25rem;
+    font-size: 0.9rem;
+  }
+
+  .disclaimer {
+    background: var(--warn-bg);
+    border: 1px solid var(--warn-border);
+    color: var(--warn-text);
+    border-radius: 8px;
+    padding: 0.9rem 1.1rem;
+    font-size: 0.88rem;
+    margin-bottom: 2rem;
+  }
+  .disclaimer strong { color: #6b4a0a; }
+
+  section { margin-bottom: 2.5rem; }
+  section h2 {
+    font-size: 1.05rem;
+    margin: 0 0 0.9rem;
+    color: var(--text);
+    border-bottom: 1px solid var(--panel-border);
+    padding-bottom: 0.5rem;
+  }
+
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    padding: 1.1rem 1.3rem;
+    box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+  }
+
+  .profile-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 0.9rem 1.5rem;
+  }
+  .profile-item .label {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-dim);
+    margin-bottom: 0.2rem;
+  }
+  .profile-item .value {
+    font-size: 0.98rem;
+    font-family: var(--mono);
+  }
+  .profile-notes {
+    margin-top: 1rem;
+    padding-top: 0.9rem;
+    border-top: 1px solid var(--panel-border);
+    color: var(--text-dim);
+    font-size: 0.85rem;
+  }
+
+  .badge {
+    display: inline-block;
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-family: var(--mono);
+  }
+  .badge.yes { background: #e3f6ed; color: var(--ok); }
+  .badge.no  { background: #fbeaea; color: var(--bad); }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.86rem;
+  }
+  th, td {
+    text-align: left;
+    padding: 0.55rem 0.7rem;
+    border-bottom: 1px solid var(--panel-border);
+    white-space: nowrap;
+  }
+  th {
+    color: var(--text-dim);
+    font-weight: 600;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  td.type { font-family: var(--mono); color: var(--accent); font-weight: 600; }
+  td.error { color: var(--bad); font-size: 0.8rem; white-space: normal; }
+  .table-wrap { overflow-x: auto; border: 1px solid var(--panel-border); border-radius: 10px; }
+  .table-wrap table { border: none; }
+  .table-wrap tr:last-child td { border-bottom: none; }
+
+  .chart {
+    margin-top: 1.2rem;
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    padding: 1.1rem 1.3rem;
+    box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+  }
+  .chart h3 {
+    margin: 0 0 1rem;
+    font-size: 0.85rem;
+    color: var(--text-dim);
+    font-weight: 600;
+  }
+  .bar-row {
+    display: grid;
+    grid-template-columns: 80px 1fr 90px;
+    align-items: center;
+    gap: 0.7rem;
+    margin-bottom: 0.55rem;
+    font-size: 0.82rem;
+  }
+  .bar-row .name { font-family: var(--mono); color: var(--text-dim); }
+  .bar-track {
+    background: #eef0f4;
+    border-radius: 6px;
+    height: 16px;
+    overflow: hidden;
+    border: 1px solid var(--panel-border);
+  }
+  .bar-fill {
+    height: 100%;
+    border-radius: 6px 0 0 6px;
+    transition: width 0.4s ease;
+  }
+  .bar-fill.init { background: var(--accent); }
+  .bar-fill.unseal { background: var(--accent-2); }
+  .bar-row .val { font-family: var(--mono); text-align: right; color: var(--text-dim); }
+
+  .legend {
+    display: flex; gap: 1.2rem; margin-top: 0.9rem; font-size: 0.78rem; color: var(--text-dim);
+  }
+  .legend span { display: inline-flex; align-items: center; gap: 0.4rem; }
+  .legend i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+  .legend i.init { background: var(--accent); }
+  .legend i.unseal { background: var(--accent-2); }
+
+  .loading, .error-msg {
+    color: var(--text-dim);
+    font-size: 0.88rem;
+    padding: 0.5rem 0;
+  }
+  .error-msg { color: var(--bad); }
+
+  footer {
+    margin-top: 3rem;
+    color: var(--text-dim);
+    font-size: 0.78rem;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <a class="home-link" href="/">← 홈으로</a>
+    <h1>KMS Seal 비교 대시보드</h1>
+    <p class="sub">Root Key 보호 방식(Dev / Shamir / TPM / K8s) 비교 — [결정 3]</p>
+  </header>
+
+  <div class="disclaimer">
+    <strong>참고:</strong> 아래 벤치마크는 로컬 개발 환경에서 측정된 값입니다.
+    TPM은 소프트웨어 시뮬레이터, K8s는 fake 클라이언트를 사용하므로
+    <strong>실제 TPM 하드웨어나 운영 K8s 클러스터의 성능과는 다를 수 있습니다.</strong>
+    이 결과는 "정확성"과 "상대적 특성"을 보여주기 위한 것이지, 절대적인 속도 수치가 아닙니다.
+  </div>
+
+  <section>
+    <h2>현재 서버가 사용 중인 Seal</h2>
+    <div id="profile-card" class="card">
+      <div class="loading">불러오는 중…</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>4개 Seal 방식 비교</h2>
+    <div id="benchmark-table-wrap">
+      <div class="loading">벤치마크 실행 중… (TPM 시뮬레이터 기동 등으로 몇 초 걸릴 수 있습니다)</div>
+    </div>
+    <div id="benchmark-chart"></div>
+  </section>
+
+  <footer>KMS-system · Graduation Project</footer>
+</div>
+
+<script>
+const BOOL_LABELS = {
+  RequiresHumans: '사람 개입 필요',
+  SinglePointOfFailure: '단일 장애점(SPOF)',
+  HardwareDependent: '하드웨어 의존',
+  AutoUnsealCapable: '자동 unseal 가능',
+};
+
+function badge(value) {
+  return `<span class="badge ${value ? 'yes' : 'no'}">${value ? 'YES' : 'NO'}</span>`;
+}
+
+function renderProfileCard(el, profile, opts) {
+  opts = opts || {};
+  const title = opts.title ? `<div class="profile-item"><div class="label">Seal Type</div><div class="value">${profile.Type}</div></div>` : '';
+  el.innerHTML = `
+    <div class="profile-grid">
+      ${title}
+      <div class="profile-item"><div class="label">Requires Humans</div><div class="value">${badge(profile.RequiresHumans)}</div></div>
+      <div class="profile-item"><div class="label">Human Count</div><div class="value">${profile.HumanCount}</div></div>
+      <div class="profile-item"><div class="label">Single Point of Failure</div><div class="value">${badge(profile.SinglePointOfFailure)}</div></div>
+      <div class="profile-item"><div class="label">Hardware Dependent</div><div class="value">${badge(profile.HardwareDependent)}</div></div>
+      <div class="profile-item"><div class="label">Auto Unseal Capable</div><div class="value">${badge(profile.AutoUnsealCapable)}</div></div>
+    </div>
+    <div class="profile-notes">${profile.Notes || ''}</div>
+  `;
+}
+
+async function loadProfile() {
+  const el = document.getElementById('profile-card');
+  try {
+    const res = await fetch('/v1/sys/seal-profile');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const profile = await res.json();
+    renderProfileCard(el, profile, { title: true });
+  } catch (err) {
+    el.innerHTML = `<div class="error-msg">seal-profile을 불러오지 못했습니다: ${err}</div>`;
+  }
+}
+
+function escapeHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function renderBenchmarkTable(wrapEl, results) {
+  const rows = results.map(r => {
+    const errCell = r.error ? `<td class="error" colspan="6">error: ${escapeHtml(r.error)}</td>` : `
+      <td>${r.init_ms.toFixed(2)} ms</td>
+      <td>${r.unseal_ms.toFixed(2)} ms</td>
+      <td>${badge(r.profile.RequiresHumans)}</td>
+      <td>${r.profile.HumanCount}</td>
+      <td>${badge(r.profile.SinglePointOfFailure)}</td>
+      <td>${badge(r.profile.HardwareDependent)}</td>
+    `;
+    return `<tr><td class="type">${r.type}</td>${errCell}</tr>`;
+  }).join('');
+
+  wrapEl.innerHTML = `
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Seal</th>
+            <th>Init</th>
+            <th>Unseal</th>
+            <th>Humans?</th>
+            <th># People</th>
+            <th>SPOF</th>
+            <th>HW-bound</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderBenchmarkChart(chartEl, results) {
+  const usable = results.filter(r => !r.error);
+  if (usable.length === 0) {
+    chartEl.innerHTML = '';
+    return;
+  }
+  const max = Math.max(1, ...usable.flatMap(r => [r.init_ms, r.unseal_ms]));
+
+  const bars = usable.map(r => `
+    <div class="bar-row">
+      <div class="name">${r.type} (init)</div>
+      <div class="bar-track"><div class="bar-fill init" style="width:${(r.init_ms / max * 100).toFixed(1)}%"></div></div>
+      <div class="val">${r.init_ms.toFixed(2)} ms</div>
+    </div>
+    <div class="bar-row">
+      <div class="name">${r.type} (unseal)</div>
+      <div class="bar-track"><div class="bar-fill unseal" style="width:${(r.unseal_ms / max * 100).toFixed(1)}%"></div></div>
+      <div class="val">${r.unseal_ms.toFixed(2)} ms</div>
+    </div>
+  `).join('');
+
+  chartEl.innerHTML = `
+    <div class="chart">
+      <h3>Init / Unseal 소요 시간 (ms, 상대 비교)</h3>
+      ${bars}
+      <div class="legend">
+        <span><i class="init"></i> Init</span>
+        <span><i class="unseal"></i> Unseal</span>
+      </div>
+    </div>
+  `;
+}
+
+async function loadBenchmark() {
+  const tableWrap = document.getElementById('benchmark-table-wrap');
+  const chartEl = document.getElementById('benchmark-chart');
+  try {
+    const res = await fetch('/v1/sys/seal-benchmark');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const results = await res.json();
+    renderBenchmarkTable(tableWrap, results);
+    renderBenchmarkChart(chartEl, results);
+  } catch (err) {
+    tableWrap.innerHTML = `<div class="error-msg">seal-benchmark를 불러오지 못했습니다: ${err}</div>`;
+  }
+}
+
+loadProfile();
+loadBenchmark();
+</script>
+</body>
+</html>

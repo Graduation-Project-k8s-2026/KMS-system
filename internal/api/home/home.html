@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KMS-system</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f6f7f9;
+    --panel: #ffffff;
+    --panel-border: #e3e6eb;
+    --text: #1b1f27;
+    --text-dim: #6b7280;
+    --accent: #3563e9;
+    --accent-2: #0ea472;
+    --ok: #128a57;
+    --bad: #c23434;
+    --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    padding: 3.5rem 1.5rem 4rem;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Pretendard, Roboto, sans-serif;
+    line-height: 1.5;
+  }
+
+  .wrap { max-width: 880px; margin: 0 auto; }
+
+  .home-link {
+    display: inline-block;
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    text-decoration: none;
+    margin-bottom: 0.6rem;
+  }
+  .home-link:hover { color: var(--accent); }
+
+  header { text-align: center; margin-bottom: 3rem; }
+  header h1 { font-size: 2rem; margin: 0 0 0.5rem; letter-spacing: -0.01em; }
+  header p.sub { color: var(--text-dim); margin: 0; font-size: 0.98rem; }
+
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: 1.2rem;
+    margin-bottom: 3rem;
+  }
+
+  .card-link {
+    display: block;
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 12px;
+    padding: 1.6rem 1.4rem;
+    text-decoration: none;
+    color: inherit;
+    box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+    transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+  }
+  .card-link:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 20px rgba(16, 24, 40, 0.08);
+    border-color: var(--accent);
+  }
+
+  .card-link .icon {
+    font-size: 1.6rem;
+    margin-bottom: 0.8rem;
+  }
+  .card-link h2 {
+    font-size: 1.05rem;
+    margin: 0 0 0.5rem;
+    color: var(--text);
+  }
+  .card-link p {
+    font-size: 0.86rem;
+    color: var(--text-dim);
+    margin: 0 0 1rem;
+  }
+  .card-link .go {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--accent);
+  }
+
+  .status-line {
+    text-align: center;
+    font-size: 0.85rem;
+    color: var(--text-dim);
+  }
+  .status-line .value { font-family: var(--mono); color: var(--text); }
+  .status-line .state.unsealed { color: var(--ok); font-weight: 600; }
+  .status-line .state.sealed { color: var(--bad); font-weight: 600; }
+
+  footer {
+    margin-top: 3rem;
+    color: var(--text-dim);
+    font-size: 0.78rem;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <a class="home-link" href="/">← 홈으로</a>
+    <h1>KMS-system</h1>
+    <p class="sub">Kubernetes용 자체 구현 Transit형 KMS · [결정 3] 루트 키 보호 비교 실험</p>
+  </header>
+
+  <div class="cards">
+    <a class="card-link" href="/dashboard">
+      <div class="icon">📊</div>
+      <h2>Seal 비교 대시보드</h2>
+      <p>4가지 루트 키 보호 방식의 성능/특성을 비교합니다.</p>
+      <div class="go">열기 →</div>
+    </a>
+
+    <a class="card-link" href="/console">
+      <div class="icon">🛠️</div>
+      <h2>운영자 콘솔</h2>
+      <p>서버를 초기화하고, 봉인을 해제하고, 키를 관리합니다.</p>
+      <div class="go">열기 →</div>
+    </a>
+
+    <a class="card-link" href="/portal">
+      <div class="icon">🔐</div>
+      <h2>고객 포털</h2>
+      <p>키로 데이터를 암호화/복호화합니다.</p>
+      <div class="go">열기 →</div>
+    </a>
+  </div>
+
+  <div class="status-line" id="status-line">서버 상태 확인 중…</div>
+
+  <footer>KMS-system · Graduation Project</footer>
+</div>
+
+<script>
+async function loadStatus() {
+  const el = document.getElementById('status-line');
+  try {
+    const res = await fetch('/v1/sys/seal-status');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const stateClass = data.sealed ? 'sealed' : 'unsealed';
+    const stateText = data.sealed ? 'Sealed' : 'Unsealed';
+    el.innerHTML = `Seal 방식: <span class="value">${data.seal_type}</span> · 상태: <span class="state ${stateClass}">${stateText}</span>`;
+  } catch (err) {
+    el.textContent = '서버 상태를 불러오지 못했습니다.';
+  }
+}
+
+loadStatus();
+</script>
+</body>
+</html>

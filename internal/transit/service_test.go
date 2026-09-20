@@ -187,3 +187,66 @@ func TestDecrypt_RejectsCorruptedCiphertext(t *testing.T) {
 		t.Fatal("Decrypt succeeded on a corrupted ciphertext; want error")
 	}
 }
+
+func TestRewrap_AfterRotation_UpgradesToLatestVersion(t *testing.T) {
+	svc, km := newTestService(t)
+	if _, err := km.CreateKey("app", 0); err != nil {
+		t.Fatalf("CreateKey failed: %v", err)
+	}
+
+	plaintext := []byte("rewrap me")
+	v1Ciphertext, err := svc.Encrypt("app", plaintext)
+	if err != nil {
+		t.Fatalf("Encrypt (v1) failed: %v", err)
+	}
+
+	if _, err := km.RotateKey("app"); err != nil {
+		t.Fatalf("RotateKey failed: %v", err)
+	}
+
+	v2Ciphertext, err := svc.Rewrap("app", v1Ciphertext)
+	if err != nil {
+		t.Fatalf("Rewrap failed: %v", err)
+	}
+	if !strings.HasPrefix(v2Ciphertext, "kms:v2:") {
+		t.Fatalf("Rewrap result = %q, want prefix %q", v2Ciphertext, "kms:v2:")
+	}
+	if v2Ciphertext == v1Ciphertext {
+		t.Fatal("Rewrap result is identical to the original v1 ciphertext; expected it to be re-wrapped")
+	}
+
+	got, err := svc.Decrypt("app", v2Ciphertext)
+	if err != nil {
+		t.Fatalf("Decrypt (rewrapped) failed: %v", err)
+	}
+	if !bytes.Equal(got, plaintext) {
+		t.Fatalf("Decrypt (rewrapped) = %q, want %q", got, plaintext)
+	}
+}
+
+func TestRewrap_RejectsVersionBelowMinDecryptionVersion(t *testing.T) {
+	svc, km := newTestService(t)
+	if _, err := km.CreateKey("app", 0); err != nil {
+		t.Fatalf("CreateKey failed: %v", err)
+	}
+
+	v1Ciphertext, err := svc.Encrypt("app", []byte("old data"))
+	if err != nil {
+		t.Fatalf("Encrypt (v1) failed: %v", err)
+	}
+
+	if _, err := km.RotateKey("app"); err != nil {
+		t.Fatalf("RotateKey failed: %v", err)
+	}
+
+	minV := 2
+	if _, err := km.UpdateConfig("app", &minV, nil); err != nil {
+		t.Fatalf("UpdateConfig failed: %v", err)
+	}
+
+	// 내부적으로 Rewrap의 첫 단계가 Decrypt이므로, min_decryption_version 아래로
+	// 떨어진 v1은 여기서부터 거부되어 rewrap도 함께 불가능해진다.
+	if _, err := svc.Rewrap("app", v1Ciphertext); err == nil {
+		t.Fatal("Rewrap succeeded on a version below min_decryption_version; want error")
+	}
+}

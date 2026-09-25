@@ -46,13 +46,16 @@ Root Key (seal이 보호, 메모리에만 존재)
 3. (진행 예정) `go mod init github.com/Graduation-Project-k8s-2026/KMS-system`
 
 ## 프로젝트 구조 (예정)
-cmd/server/        실행 진입점 (main.go)
-internal/crypto/    AES-GCM, 봉투암호화 로직
-internal/keys/      키 생성/조회/회전/버전 관리
-internal/seal/      루트 키 보호 (Seal 인터페이스 + 구현체)
-internal/storage/   저장 백엔드 (StorageBackend 인터페이스 + 구현체)
-internal/api/       HTTP 핸들러/라우팅
-docs/               리서치 노트, 설계 근거 등 코드 외 문서
+cmd/server/            실행 진입점 (main.go) — Transit(TCP)/Admin(유닉스 소켓) 두 리스너를 함께 기동
+internal/crypto/       AES-GCM, 봉투암호화 로직
+internal/keys/         키 생성/조회/회전/버전 관리
+internal/seal/         루트 키 보호 (Seal 인터페이스 + 구현체)
+internal/storage/      저장 백엔드 (StorageBackend 인터페이스 + 구현체)
+internal/api/httputil/ 두 평면이 공유하는 JSON 응답 헬퍼, 에러 매핑, sealed 가드 미들웨어
+internal/api/transit/  데이터 평면 — 암호화/복호화/rewrap, seal 비교·벤치마크 (TCP로 노출)
+internal/api/admin/    관리 평면 — 키 관리, init/unseal/seal-status (유닉스 소켓 전용)
+internal/api/console/, portal/, dashboard/, home/  웹 UI (현재 비활성 — 아래 "웹 UI" 절 참고)
+docs/                  리서치 노트, 설계 근거 등 코드 외 문서
 
 ## 브랜치 & 협업 전략
 
@@ -69,6 +72,9 @@ docs/               리서치 노트, 설계 근거 등 코드 외 문서
 
 ### 1. 서버 실행
 
+서버는 두 개의 리스너를 동시에 띄웁니다: Transit(데이터 평면, TCP)과
+Admin(관리 평면, 유닉스 도메인 소켓).
+
 ```bash
 KMS_SEAL_TYPE=dev KMS_MASTER_KEY=change-me KMS_STORAGE=memory go run ./cmd/server
 ```
@@ -82,54 +88,77 @@ KMS_SEAL_TYPE=dev KMS_MASTER_KEY=change-me KMS_STORAGE=memory go run ./cmd/serve
 | `tpm` | TPM 봉인 | `KMS_TPM_SIMULATOR=true`(시뮬레이터) 또는 `KMS_TPM_DEVICE`(실제 장치, 기본 `/dev/tpmrm0`) |
 | `k8s` | K8s Secret 위임 | `KMS_K8S_NAMESPACE`(기본 `default`), `KMS_K8S_SECRET_NAME`(기본 `kms-root-key`) |
 
-기타: `KMS_STORAGE`(`memory`\|`file`, 기본 `file`), `KMS_DATA_DIR`(기본 `./data`), `PORT`(기본 `8200`)
+리스너 관련 환경변수:
 
-### 2. 웹 화면
-
-서버 실행 후 브라우저에서 접속:
-
-| 경로 | 대상 | 용도 |
+| 변수 | 기본값 | 설명 |
 |---|---|---|
-| `/` | - | 홈 — 세 화면 소개 + 현재 상태 |
-| `/console` | 운영자 | 서버 초기화(Init), 봉인 해제(Unseal), 키 생성/조회/회전/정책 설정 |
-| `/portal` | 고객 | 키로 데이터 암호화/복호화/재암호화(Rewrap) |
-| `/dashboard` | - | 4개 seal 방식의 속도·특성 비교 |
+| `KMS_TRANSIT_ADDR` | `:8200` | Transit(데이터 평면) TCP 리스너 주소 |
+| `PORT` | `8200` | `KMS_TRANSIT_ADDR`가 비어 있을 때만 쓰이는 하위호환 변수 (포트 번호만) |
+| `KMS_ADMIN_SOCKET` | `/var/run/kms/admin.sock` | Admin(관리 평면) 유닉스 도메인 소켓 경로. 부모 디렉터리가 없으면 생성하고, 이전 실행이 남긴 소켓 파일(stale socket)이 있으면 지우고 다시 바인딩합니다. 파일 권한은 `0600`. |
 
-### 3. 최초 실행 흐름
+기타: `KMS_STORAGE`(`memory`\|`file`, 기본 `file`), `KMS_DATA_DIR`(기본 `./data`)
 
-1. `/console` 접속 → "초기화" 클릭
-   - `dev`/`tpm`/`k8s`: 바로 초기화 완료
-   - `shamir`: 조각 N개가 화면에 표시됨 (이 순간 한 번만 보임 — 반드시 복사해둘 것)
-2. 봉인 해제(Unseal)
-   - `dev`/`tpm`/`k8s`: 버튼 한 번
-   - `shamir`: 조각을 하나씩 입력해 threshold(기본 3)개 제출
-3. `/console`에서 키 생성
-4. `/portal`에서 그 키로 암호화/복호화
+### 2. 웹 UI — 현재 비활성
 
-### 4. API 직접 호출 (curl)
+`console`/`portal`/`dashboard`/`home` 패키지(코드)는 저장소에 그대로 남아
+있지만, 이번 API 계층 분리 이후로는 Transit/Admin 어느 리스너에도
+등록되지 않습니다.
+
+이유: 관리 기능(키 생성, init/unseal 등)이 유닉스 소켓(`admin.sock`)으로
+옮겨갔는데, 브라우저는 유닉스 소켓에 직접 접속할 수 없습니다. 이후 별도
+프로세스로 "관리 API"(HTTPS를 받아 admin.sock으로 중계)가 추가되면, 그때
+웹 UI를 그쪽으로 옮겨 다시 활성화할 예정입니다. 그 전까지는 아래 curl
+예시처럼 admin.sock을 직접 호출해야 합니다.
+
+### 3. API 직접 호출 (curl)
+
+**Admin(관리 평면)** — 유닉스 소켓 `KMS_ADMIN_SOCKET`(기본
+`/var/run/kms/admin.sock`)으로만 호출할 수 있습니다. `curl --unix-socket`을
+씁니다 (URL의 호스트 부분은 무시되므로 아무 값이나 둬도 됩니다).
 
 ```bash
+SOCK=/var/run/kms/admin.sock
+
 # 상태 확인
-curl localhost:8200/v1/sys/seal-status
+curl --unix-socket $SOCK http://localhost/v1/sys/seal-status
 
 # 초기화 및 봉인 해제 (dev 기준)
-curl -XPOST localhost:8200/v1/sys/init
-curl -XPOST localhost:8200/v1/sys/unseal
+curl --unix-socket $SOCK -XPOST http://localhost/v1/sys/init
+curl --unix-socket $SOCK -XPOST http://localhost/v1/sys/unseal
 
 # 키 생성
-curl -XPOST localhost:8200/v1/keys -H 'content-type: application/json' \
-  -d '{"name":"demo"}'
+curl --unix-socket $SOCK -XPOST http://localhost/v1/keys \
+  -H 'content-type: application/json' -d '{"name":"demo"}'
 
+# 키 목록 / 조회 / 회전 / 정책 설정
+curl --unix-socket $SOCK http://localhost/v1/keys
+curl --unix-socket $SOCK http://localhost/v1/keys/demo
+curl --unix-socket $SOCK -XPOST http://localhost/v1/keys/demo/rotate
+curl --unix-socket $SOCK -XPOST http://localhost/v1/keys/demo/config \
+  -H 'content-type: application/json' -d '{"min_decryption_version":2}'
+```
+
+**Transit(데이터 평면)** — 네트워크(TCP, 기본 `:8200`)로 호출합니다.
+
+```bash
 # 암호화
 curl -XPOST localhost:8200/v1/encrypt/demo -H 'content-type: application/json' \
   -d "{\"plaintext\":\"$(echo -n 'hello' | base64)\"}"
+
+# 복호화
+curl -XPOST localhost:8200/v1/decrypt/demo -H 'content-type: application/json' \
+  -d '{"ciphertext":"<위 암호화 응답의 ciphertext>"}'
+
+# seal 방식 비교·벤치마크 (키 사용과 무관한 읽기 전용 진단 엔드포인트)
+curl localhost:8200/v1/sys/seal-profile
+curl localhost:8200/v1/sys/seal-benchmark
 ```
 
-### 5. 로컬 K8s(kind)에서 K8sSeal 검증
+### 4. 로컬 K8s(kind)에서 K8sSeal 검증
 
 ```bash
 kind create cluster --name kms-dev
 KMS_SEAL_TYPE=k8s KMS_STORAGE=memory go run ./cmd/server
-# 다른 터미널에서 위 API 호출 후:
+# 다른 터미널에서 위 admin.sock curl 호출로 init/unseal 후:
 kubectl get secret kms-root-key -o yaml
 ```

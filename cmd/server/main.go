@@ -2,33 +2,65 @@
 // keys, transit, rotation, api)을 실제 구현체로 조립한다 — "무엇을 쓸지
 // 결정하고 서로 연결하는" 책임은 main에 있고, "요청을 어떻게 처리할지"는
 // api 패키지의 책임이다.
+//
+// 서버는 두 개의 독립된 리스너를 동시에 띄운다:
+//   - Transit(데이터 평면): TCP, KMS_TRANSIT_ADDR(기본 :8200) — 네트워크로
+//     열려 사용자 애플리케이션이 암복호화를 요청한다.
+//   - Admin(관리 평면): 유닉스 도메인 소켓, KMS_ADMIN_SOCKET(기본
+//     /var/run/kms/admin.sock) — 같은 노드의 관리자만 접근해 키 관리와
+//     init/unseal을 수행한다. 브라우저는 유닉스 소켓에 접속할 수 없으므로
+//     웹 UI(console/portal/dashboard/home)는 어느 리스너에도 등록하지
+//     않는다 — 관리 API(HTTPS -> admin.sock 중계)가 생기기 전까지는 비활성.
 package main
 
 import (
+	"context"
+	"errors"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
+	"sync"
+	"syscall"
+	"time"
 
 	"github.com/google/go-tpm-tools/simulator"
 	tpm2 "github.com/google/go-tpm/legacy/tpm2"
 
-	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/api"
+	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/api/admin"
+	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/api/transit"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/barrier"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/keys"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/rotation"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/seal"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/storage"
-	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/transit"
+	transitsvc "github.com/Graduation-Project-k8s-2026/KMS-system/internal/transit"
 )
+
+// shutdownTimeout: SIGINT/SIGTERM 수신 후 진행 중인 요청을 정리할 수 있게
+// 주는 최대 유예 시간.
+const shutdownTimeout = 10 * time.Second
+
+// adminSocketPerm: admin.sock의 파일 권한. 같은 노드의 소유자만 접근
+// 가능해야 하므로 그룹/other에는 아무 권한도 주지 않는다.
+const adminSocketPerm = 0o600
 
 func main() {
 	storageKind := getenvDefault("KMS_STORAGE", "file")
 	dataDir := getenvDefault("KMS_DATA_DIR", "./data")
-	port := getenvDefault("PORT", "8200")
 	autoUnseal := os.Getenv("KMS_AUTO_UNSEAL") == "true"
+
+	transitAddr := getenvDefault("KMS_TRANSIT_ADDR", "")
+	if transitAddr == "" {
+		// PORT는 하위호환을 위해 계속 인식한다 — 기존 배포 설정이 그대로
+		// 동작해야 한다.
+		transitAddr = ":" + getenvDefault("PORT", "8200")
+	}
+	adminSocketPath := getenvDefault("KMS_ADMIN_SOCKET", "/var/run/kms/admin.sock")
 
 	// newStorage는 barrier용 storage와, TPMSeal 전용 storage(barrier와는
 	// 완전히 별개 — 이유는 internal/seal/tpm.go의 store 필드 주석 참고)를
@@ -54,7 +86,7 @@ func main() {
 	sealType := getenvDefault("KMS_SEAL_TYPE", "dev")
 
 	// shamirParts/shamirThreshold는 seal_type이 "shamir"일 때만 쓰이지만,
-	// api.Deps에 그대로 전달해 POST /v1/sys/init(InitShamir 호출)과
+	// admin.Deps에 그대로 전달해 POST /v1/sys/init(InitShamir 호출)과
 	// seal-status/unseal의 진행 상황 표시("2/3")에 재사용한다.
 	var (
 		sealer          seal.Seal
@@ -116,7 +148,7 @@ func main() {
 	// 무엇인지 결정해서 서로 연결하는 건 이 main의 책임이다.
 	b := barrier.NewBarrier(store, sealer)
 	km := keys.NewKeyManager(b)
-	ts := transit.NewTransitService(km)
+	ts := transitsvc.NewTransitService(km)
 	scheduler := rotation.NewRotationScheduler(km, rotation.WithOnRotate(func(name string) {
 		log.Printf("rotation: rotated key %q", name)
 	}))
@@ -141,21 +173,97 @@ func main() {
 		scheduler.Start()
 	}
 
-	router := api.NewRouter(api.Deps{
+	transitRouter := transit.NewRouter(transit.Deps{
+		Barrier: b,
+		Transit: ts,
+		Seal:    sealer,
+	})
+	adminRouter := admin.NewRouter(admin.Deps{
 		Barrier:         b,
 		Keys:            km,
-		Transit:         ts,
 		Seal:            sealer,
 		ShamirParts:     shamirParts,
 		ShamirThreshold: shamirThreshold,
 	})
 
-	log.Printf("kms-system starting: port=%s storage=%s seal=%s sealed=%v",
-		port, storageKind, sealer.Type(), b.IsSealed())
-
-	if err := http.ListenAndServe(":"+port, router); err != nil {
-		log.Fatalf("server stopped: %v", err)
+	// 두 리스너 모두 바인딩을 먼저 동기적으로 끝낸다 — 기동 실패는 goroutine을
+	// 띄우기 전에 여기서 바로 드러나야 "리스너 중 하나라도 기동 실패하면
+	// 명확한 에러와 함께 종료"할 수 있다.
+	transitListener, err := net.Listen("tcp", transitAddr)
+	if err != nil {
+		log.Fatalf("failed to listen on transit address %q: %v", transitAddr, err)
 	}
+	adminListener, err := listenUnixSocket(adminSocketPath)
+	if err != nil {
+		log.Fatalf("failed to listen on admin socket %q: %v", adminSocketPath, err)
+	}
+	defer os.Remove(adminSocketPath)
+
+	transitSrv := &http.Server{Handler: transitRouter}
+	adminSrv := &http.Server{Handler: adminRouter}
+
+	log.Printf("kms-system starting: transit=%s admin=%s storage=%s seal=%s sealed=%v",
+		transitAddr, adminSocketPath, storageKind, sealer.Type(), b.IsSealed())
+
+	serverErrs := make(chan error, 2)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		if err := transitSrv.Serve(transitListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serverErrs <- err
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if err := adminSrv.Serve(adminListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serverErrs <- err
+		}
+	}()
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	select {
+	case <-ctx.Done():
+		log.Print("shutdown signal received, shutting down both listeners")
+	case err := <-serverErrs:
+		log.Printf("listener failed: %v; shutting down both listeners", err)
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+	if err := transitSrv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("transit listener shutdown error: %v", err)
+	}
+	if err := adminSrv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("admin listener shutdown error: %v", err)
+	}
+	wg.Wait()
+}
+
+// listenUnixSocket은 admin.sock을 위한 유닉스 도메인 소켓 리스너를 만든다.
+//   - 부모 디렉터리가 없으면 생성한다.
+//   - 이전 실행이 비정상 종료해 소켓 파일이 남아있으면(stale socket) 새로
+//     바인딩하기 전에 제거한다 — 그대로 두면 "address already in use"로
+//     기동이 실패한다.
+//   - 바인딩 후 권한을 0600으로 좁혀 같은 노드의 소유자만 접근하게 한다.
+func listenUnixSocket(path string) (net.Listener, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, err
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	l, err := net.Listen("unix", path)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(path, adminSocketPerm); err != nil {
+		l.Close()
+		return nil, err
+	}
+	return l, nil
 }
 
 func getenvDefault(key, fallback string) string {

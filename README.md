@@ -308,7 +308,130 @@ curl -XPOST localhost:8200/v1/encrypt/demo -H 'content-type: application/json' \
 # -> 401 {"error":"unauthorized"}
 ```
 
-### 6. 로컬 K8s(kind)에서 K8sSeal 검증
+### 6. Transit API 인가 (SubjectAccessReview, 2단계: 권한 판단)
+
+1단계(인증)는 "누구인지"만 확인했고, 검증만 통과하면 모든 키에 접근할 수
+있었습니다. `KMS_AUTHZ=on`으로 켜면 "이 요청자가 이 키에 이 동작을 해도
+되는가"까지 판단합니다. **Admin(admin.sock)에는 적용되지 않습니다** —
+1단계와 같은 이유(소켓 파일 권한/같은 노드 제약)입니다.
+
+KMS는 자체 정책 저장소를 갖지 않습니다. 대신 kube-apiserver의
+**SubjectAccessReview(SAR)**에 "이 주체가 이 작업을 해도 되는가"를 묻고,
+관리자는 익숙한 `kubectl`로 `Role`/`RoleBinding`만 다루면 됩니다.
+
+#### RBAC 어휘 매핑
+
+KMS의 개념을 쿠버네티스 RBAC 어휘로 옮깁니다. 아래는 실제로 존재하는
+쿠버네티스 리소스가 아닙니다 — SAR은 존재하지 않는(가상의) 리소스에도
+질의를 허용하므로 이 방식이 성립합니다. API 그룹/리소스 이름은
+`internal/authz`의 상수(`APIGroup`, `Resource`) 한 곳에서만 정의하므로
+바뀌어도 그 한 곳만 고치면 됩니다.
+
+| KMS 개념 | RBAC 표현 |
+|---|---|
+| API 그룹 | `kms.local` |
+| 리소스 종류 | `keys` |
+| 키 이름 | `resourceNames` |
+| 동작 | verb: `encrypt`, `decrypt`, `rewrap` |
+| 스코프 | 네임스페이스(요청자의 namespace 기준) |
+
+> **네임스페이스 스코프의 의미.** 키 저장소 자체에는 네임스페이스 개념이
+> 없습니다 — 키는 클러스터 전역으로 하나의 목록입니다. 네임스페이스는
+> **접근 권한 판단에만** 쓰입니다. 즉 "team-a의 demo 키"가 따로 존재하는
+> 게 아니라, "demo 키에 대한 team-a 소속 요청자의 권한"을 SAR에 묻는
+> 것입니다. 같은 `demo` 키를 여러 네임스페이스의 ServiceAccount가 서로
+> 다른 권한으로(예: team-a는 encrypt+decrypt, team-b는 encrypt만) 쓸 수
+> 있습니다.
+
+`seal-profile`/`seal-benchmark`은 인가 대상에서 제외합니다 — 특정 키를
+대상으로 하지 않는 진단용 엔드포인트이고, 애초에 이 둘을 Admin이 아닌
+Transit에 둔 이유가 벤치마크 실행기(Job) 같은 호출자가 키 관리 권한 없이
+호출할 수 있게 하려는 것이었기 때문입니다. 인증(1단계)은 그대로
+요구합니다.
+
+#### Role/RoleBinding 예시
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kms-demo-key-user
+  namespace: team-a
+rules:
+- apiGroups: ["kms.local"]
+  resources: ["keys"]
+  resourceNames: ["demo"]
+  verbs: ["encrypt", "decrypt"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kms-demo-key-user-binding
+  namespace: team-a
+subjects:
+- kind: ServiceAccount
+  name: app-workload
+  namespace: team-a
+roleRef:
+  kind: Role
+  name: kms-demo-key-user
+  apiGroup: rbac.authorization.k8s.io
+```
+
+이 Role/RoleBinding이 있으면 `team-a` 네임스페이스의 `app-workload`
+ServiceAccount는 `demo` 키에 `encrypt`/`decrypt`만 할 수 있고, `rewrap`이나
+다른 키에는 여전히 403을 받습니다.
+
+#### 환경변수
+
+| 변수 | 기본값 | 설명 |
+|---|---|---|
+| `KMS_AUTHZ` | `off` | `off`\|`on`. off면 인증만 통과하면 모든 키에 접근 가능(경고 로그 남김). **`KMS_AUTHN=off`인데 `KMS_AUTHZ=on`이면 기동을 실패시킨다** — 신원 없이는 권한을 판단할 수 없다 |
+| `KMS_KUBECONFIG` | (없음) | kube-apiserver 접속용 kubeconfig 파일 경로. 비어 있으면 in-cluster 설정을 시도한다. 둘 다 실패하면 기동을 실패시킨다 |
+| `KMS_AUTHZ_CACHE_TTL` | `10`(초) | SAR 판단 결과(허용/거부 둘 다)를 캐싱하는 시간. 짧을수록 권한 회수가 반영되는 지연이 줄지만 apiserver 호출이 늘어난다 |
+| `KMS_AUTHZ_TIMEOUT` | `3`(초) | SAR 호출 하나에 허용하는 최대 시간 |
+| `KMS_AUTHZ_FAIL_OPEN` | `false` | apiserver 호출 자체가 실패했을 때(타임아웃 등, 캐시 미스 상태) 거부(기본, fail-closed) 대신 허용할지. `true`면 기동 시 경고 로그를 남긴다 |
+
+> ⚠️ **기본은 fail-closed입니다.** apiserver에 물어볼 수 없으면(장애,
+> 타임아웃 등) 기본적으로 거부합니다 — 보안 도구이므로 판단이 안 될 때는
+> 거부하는 쪽이 안전하다고 봅니다. 단, apiserver 호출 자체가 실패한
+> 경우의 이 폴백 결정은 캐싱하지 않습니다 — 장애가 복구되면 바로 다음
+> 요청부터 실제 판단으로 돌아갑니다.
+
+#### KMS용 kubeconfig에 필요한 최소 권한
+
+KMS가 SubjectAccessReview를 **생성**할 수 있어야 합니다. 클러스터
+전역(비네임스페이스) 리소스이므로 `ClusterRole`+`ClusterRoleBinding`이
+필요합니다:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kms-sar-creator
+rules:
+- apiGroups: ["authorization.k8s.io"]
+  resources: ["subjectaccessreviews"]
+  verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kms-sar-creator-binding
+subjects:
+- kind: ServiceAccount
+  name: <KMS가 KMS_KUBECONFIG로 접속할 때 쓰는 주체>
+  namespace: <해당 네임스페이스>
+roleRef:
+  kind: ClusterRole
+  name: kms-sar-creator
+  apiGroup: rbac.authorization.k8s.io
+```
+
+이 이상의 권한(키 목록 조회, Secret 접근 등)은 필요 없습니다 — KMS는
+SAR "질의"만 하고, RBAC 규칙 자체를 읽거나 쓰지 않습니다.
+
+### 7. 로컬 K8s(kind)에서 K8sSeal 검증
 
 ```bash
 kind create cluster --name kms-dev

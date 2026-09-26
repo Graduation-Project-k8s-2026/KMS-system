@@ -33,6 +33,7 @@ import (
 
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/api/admin"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/api/transit"
+	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/authn"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/barrier"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/keys"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/rotation"
@@ -173,10 +174,16 @@ func main() {
 		scheduler.Start()
 	}
 
+	verifier, err := buildAuthnVerifier()
+	if err != nil {
+		log.Fatalf("KMS_AUTHN=on but building the ServiceAccount token verifier failed: %v", err)
+	}
+
 	transitRouter := transit.NewRouter(transit.Deps{
-		Barrier: b,
-		Transit: ts,
-		Seal:    sealer,
+		Barrier:  b,
+		Transit:  ts,
+		Seal:     sealer,
+		Verifier: verifier,
 	})
 	adminRouter := admin.NewRouter(admin.Deps{
 		Barrier:         b,
@@ -240,6 +247,38 @@ func main() {
 		log.Printf("admin listener shutdown error: %v", err)
 	}
 	wg.Wait()
+}
+
+// buildAuthnVerifier는 KMS_AUTHN에 따라 Transit 라우터에 붙일 인증 검증기를
+// 만든다. KMS_AUTHN=off(기본값)면 nil을 반환한다 — Transit 라우터는 nil
+// Verifier를 "인증 미들웨어를 등록하지 않음"으로 취급한다. 로컬 개발/테스트가
+// 지금 토큰 없는 curl로 이뤄지고 있으므로, 기본 동작을 깨지 않기 위한
+// 선택이다.
+//
+// Admin(유닉스 소켓)에는 이 인증을 적용하지 않는다 — 소켓 파일 권한(0600)과
+// 같은 노드 제약으로 이미 보호되며, 관리 API 인증은 별도 과제다.
+func buildAuthnVerifier() (*authn.Verifier, error) {
+	mode := getenvDefault("KMS_AUTHN", "off")
+	switch mode {
+	case "off":
+		log.Print("authentication is disabled (KMS_AUTHN=off) — all Transit requests are accepted")
+		return nil, nil
+
+	case "on":
+		keyPaths := authn.SplitKeyPaths(getenvDefault("KMS_SA_PUBLIC_KEY", "/etc/kubernetes/pki/sa.pub"))
+		keys, err := authn.LoadPublicKeys(keyPaths)
+		if err != nil {
+			return nil, err
+		}
+		return authn.NewVerifier(keys, authn.Config{
+			Issuer:   os.Getenv("KMS_SA_ISSUER"),
+			Audience: os.Getenv("KMS_SA_AUDIENCE"),
+		}), nil
+
+	default:
+		log.Fatalf("unknown KMS_AUTHN %q; want \"off\" or \"on\"", mode)
+		return nil, nil // unreachable
+	}
 }
 
 // listenUnixSocket은 admin.sock을 위한 유닉스 도메인 소켓 리스너를 만든다.

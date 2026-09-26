@@ -24,6 +24,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/api/httputil"
+	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/authn"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/barrier"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/seal"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/transit"
@@ -43,6 +44,12 @@ type Deps struct {
 	// 특성"을 보여주기 위해서만 쓰인다 — admin 라우터의 init/unseal과 달리
 	// 여기서는 구체 타입 단언 없이 seal.Profiler 인터페이스로만 다룬다.
 	Seal seal.Seal
+
+	// Verifier: 설정돼 있으면(KMS_AUTHN=on) 이 라우터의 모든 요청에
+	// ServiceAccount 토큰 인증을 강제한다. nil이면(KMS_AUTHN=off, 기본값)
+	// 인증 없이 통과시킨다 — 로컬 개발/테스트가 토큰 없는 curl로 이뤄지는
+	// 현재 동작을 깨지 않기 위한 기본값이다.
+	Verifier *authn.Verifier
 }
 
 // NewRouter는 Deps를 엮어 chi 라우터를 구성해 반환한다. 관리 라우트(키
@@ -50,6 +57,13 @@ type Deps struct {
 // 없다 — internal/api/admin.NewRouter가 별도로 제공한다.
 func NewRouter(deps Deps) http.Handler {
 	r := chi.NewRouter()
+
+	// 인증은 이 라우터의 모든 라우트(seal-profile/seal-benchmark 포함)에
+	// 적용한다 — Admin(유닉스 소켓)에는 적용하지 않는다(소켓 파일 권한과
+	// 같은 노드 제약으로 이미 보호되며, 관리 API 인증은 별도 과제다).
+	if deps.Verifier != nil {
+		r.Use(authn.Middleware(deps.Verifier))
+	}
 
 	// seal-profile/seal-benchmark은 sealed 가드 밖에 둔다 — barrier가
 	// 아직 sealed더라도(오히려 sealed 상태일 때 더) "이 환경에서 각 seal

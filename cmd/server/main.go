@@ -34,6 +34,7 @@ import (
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/api/admin"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/api/transit"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/authn"
+	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/authz"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/barrier"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/keys"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/rotation"
@@ -179,11 +180,17 @@ func main() {
 		log.Fatalf("KMS_AUTHN=on but building the ServiceAccount token verifier failed: %v", err)
 	}
 
+	authorizer, err := buildAuthzAuthorizer(verifier != nil)
+	if err != nil {
+		log.Fatalf("KMS_AUTHZ=on but building the authorizer failed: %v", err)
+	}
+
 	transitRouter := transit.NewRouter(transit.Deps{
-		Barrier:  b,
-		Transit:  ts,
-		Seal:     sealer,
-		Verifier: verifier,
+		Barrier:    b,
+		Transit:    ts,
+		Seal:       sealer,
+		Verifier:   verifier,
+		Authorizer: authorizer,
 	})
 	adminRouter := admin.NewRouter(admin.Deps{
 		Barrier:         b,
@@ -281,6 +288,52 @@ func buildAuthnVerifier() (*authn.Verifier, error) {
 	}
 }
 
+// errAuthzRequiresAuthn: KMS_AUTHZ=on인데 KMS_AUTHN=off일 때 반환하는 에러.
+// 신원(1단계) 없이는 권한을 판단할 근거가 없으므로 설정 오류로 취급한다.
+var errAuthzRequiresAuthn = errors.New("KMS_AUTHZ=on requires KMS_AUTHN=on — authorization needs a verified identity to check permissions against")
+
+// buildAuthzAuthorizer는 KMS_AUTHZ에 따라 Transit 라우터에 붙일 인가기를
+// 만든다. KMS_AUTHZ=off(기본값)면 nil을 반환한다 — Transit 라우터는 nil
+// Authorizer를 "인가 미들웨어를 등록하지 않음"으로 취급하고, 인증만
+// 통과하면 모든 키에 접근할 수 있다(2단계 이전과 동일한 동작).
+//
+// authnEnabled는 buildAuthnVerifier의 결과(nil이 아니었는지)를 그대로
+// 받는다 — 신원 없이는 권한을 판단할 수 없으므로, KMS_AUTHN=off인데
+// KMS_AUTHZ=on이면 설정 오류로 기동을 실패시킨다.
+func buildAuthzAuthorizer(authnEnabled bool) (*authz.Authorizer, error) {
+	mode := getenvDefault("KMS_AUTHZ", "off")
+	switch mode {
+	case "off":
+		log.Print("authorization is disabled (KMS_AUTHZ=off) — any authenticated request is accepted")
+		return nil, nil
+
+	case "on":
+		if !authnEnabled {
+			return nil, errAuthzRequiresAuthn
+		}
+
+		failOpen := os.Getenv("KMS_AUTHZ_FAIL_OPEN") == "true"
+		if failOpen {
+			log.Print("KMS_AUTHZ_FAIL_OPEN=true — Transit requests will be ALLOWED if the SubjectAccessReview call to apiserver fails")
+		}
+
+		client, err := authz.NewClientFromEnv(os.Getenv("KMS_KUBECONFIG"))
+		if err != nil {
+			return nil, err
+		}
+
+		return authz.NewAuthorizer(client.AuthorizationV1().SubjectAccessReviews(), authz.Config{
+			TTL:      getenvDurationSecondsDefault("KMS_AUTHZ_CACHE_TTL", 10),
+			Timeout:  getenvDurationSecondsDefault("KMS_AUTHZ_TIMEOUT", 3),
+			FailOpen: failOpen,
+		}), nil
+
+	default:
+		log.Fatalf("unknown KMS_AUTHZ %q; want \"off\" or \"on\"", mode)
+		return nil, nil // unreachable
+	}
+}
+
 // listenUnixSocket은 admin.sock을 위한 유닉스 도메인 소켓 리스너를 만든다.
 //   - 부모 디렉터리가 없으면 생성한다.
 //   - 이전 실행이 비정상 종료해 소켓 파일이 남아있으면(stale socket) 새로
@@ -322,4 +375,12 @@ func getenvIntDefault(key string, fallback int) int {
 		log.Fatalf("invalid integer value for %s: %q", key, v)
 	}
 	return n
+}
+
+// getenvDurationSecondsDefault는 환경변수를 "초 단위 정수"로 읽어
+// time.Duration으로 바꾼다. KMS_AUTHZ_CACHE_TTL/KMS_AUTHZ_TIMEOUT처럼
+// 사람이 손으로 설정하는 값이라, "3600000000000"(나노초) 대신 "3" 같은
+// 정수를 쓰게 하려는 것이다.
+func getenvDurationSecondsDefault(key string, fallbackSeconds int) time.Duration {
+	return time.Duration(getenvIntDefault(key, fallbackSeconds)) * time.Second
 }

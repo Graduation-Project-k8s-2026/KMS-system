@@ -25,6 +25,7 @@ import (
 
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/api/httputil"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/authn"
+	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/authz"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/barrier"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/seal"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/transit"
@@ -50,6 +51,16 @@ type Deps struct {
 	// 인증 없이 통과시킨다 — 로컬 개발/테스트가 토큰 없는 curl로 이뤄지는
 	// 현재 동작을 깨지 않기 위한 기본값이다.
 	Verifier *authn.Verifier
+
+	// Authorizer: 설정돼 있으면(KMS_AUTHZ=on) encrypt/decrypt/rewrap
+	// 세 라우트에 SubjectAccessReview 기반 인가를 강제한다. nil이면
+	// (KMS_AUTHZ=off, 기본값) 인증만 통과하면 모든 키에 접근할 수 있다.
+	// seal-profile/seal-benchmark은 특정 키를 대상으로 하지 않는 진단용
+	// 엔드포인트라 인가 대상에서 제외한다 — 이 둘을 Admin이 아니라 권한이
+	// 최소화된 Transit에 둔 취지(벤치마크 실행기 같은 호출자가 키 관리
+	// 권한을 가질 필요가 없게 하는 것)를 인가 요구로 다시 무색하게 만들지
+	// 않기 위함이다.
+	Authorizer *authz.Authorizer
 }
 
 // NewRouter는 Deps를 엮어 chi 라우터를 구성해 반환한다. 관리 라우트(키
@@ -74,16 +85,28 @@ func NewRouter(deps Deps) http.Handler {
 	r.Get("/v1/sys/seal-benchmark", handleSealBenchmark())
 
 	// 암복호화는 Root Key가 메모리에 있어야만 의미가 있으므로 sealed 가드를
-	// 적용한다.
+	// 적용한다. 인가는 라우트별로 다른 verb(encrypt/decrypt/rewrap)가
+	// 필요해 r.Use로 그룹 전체에 걸 수 없으므로, 라우트마다 r.With로
+	// 개별 적용한다.
 	r.Group(func(r chi.Router) {
 		r.Use(httputil.SealedGuard(deps.Barrier))
 
-		r.Post("/v1/encrypt/{name}", handleEncrypt(deps))
-		r.Post("/v1/decrypt/{name}", handleDecrypt(deps))
-		r.Post("/v1/rewrap/{name}", handleRewrap(deps))
+		r.With(authzMiddleware(deps.Authorizer, "encrypt")).Post("/v1/encrypt/{name}", handleEncrypt(deps))
+		r.With(authzMiddleware(deps.Authorizer, "decrypt")).Post("/v1/decrypt/{name}", handleDecrypt(deps))
+		r.With(authzMiddleware(deps.Authorizer, "rewrap")).Post("/v1/rewrap/{name}", handleRewrap(deps))
 	})
 
 	return r
+}
+
+// authzMiddleware는 authorizer가 nil이면(KMS_AUTHZ=off) 아무 것도 하지
+// 않는 통과용 미들웨어를, 아니면 authz.Middleware(authorizer, verb)를
+// 반환한다 — 호출부(NewRouter)가 매번 nil 체크를 반복하지 않게 한다.
+func authzMiddleware(authorizer *authz.Authorizer, verb string) func(http.Handler) http.Handler {
+	if authorizer == nil {
+		return func(next http.Handler) http.Handler { return next }
+	}
+	return authz.Middleware(authorizer, verb)
 }
 
 // ---- 요청/응답 타입 ----

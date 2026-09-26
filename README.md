@@ -100,19 +100,17 @@ KMS_SEAL_TYPE=dev KMS_MASTER_KEY=change-me KMS_STORAGE=memory go run ./cmd/serve
 
 기타: `KMS_STORAGE`(`memory`\|`file`, 기본 `file`), `KMS_DATA_DIR`(기본 `./data`)
 
-### 2. 웹 UI — 현재 비활성
+### 2. 웹 UI — console은 관리 API에서 복구됨, dashboard/portal은 아직 비활성
 
 `console`/`portal`/`dashboard`/`home` 패키지(코드)는 저장소에 그대로 남아
-있지만, 이번 API 계층 분리 이후로는 Transit/Admin 어느 리스너에도
-등록되지 않습니다.
+있지만, KMS 서버(`cmd/server`)의 Transit/Admin 리스너에는 어느 것도
+등록되지 않습니다 — 브라우저는 admin.sock(유닉스 소켓)에 직접 접속할 수
+없기 때문입니다.
 
-이유: 관리 기능(키 생성, init/unseal 등)이 유닉스 소켓(`admin.sock`)으로
-옮겨갔는데, 브라우저는 유닉스 소켓에 직접 접속할 수 없습니다. 아래 "4.
-관리 API" 절에서 다루는 별도 프로세스가 HTTP를 받아 admin.sock으로
-중계하지만, 이 프로세스는 아직 `/v1/*` 프록시와 `/healthz`/`/readyz`만
-제공하고 웹 UI는 서빙하지 않습니다 — 웹 UI를 그쪽으로 옮기는 작업은
-다음 단계입니다. 그 전까지는 아래 curl 예시처럼 admin.sock/관리 API를
-직접 호출해야 합니다.
+대신 아래 "4. 관리 API" 절에서 다루는 별도 프로세스(`cmd/admin-api`)가
+HTTP로 `/console`을 서빙하고 그 안의 API 호출을 admin.sock으로 중계합니다
+— 운영자 콘솔은 이 경로로 다시 쓸 수 있습니다. `/dashboard`, `/portal`은
+여전히 어디에도 등록되어 있지 않습니다 — 이유는 "4. 관리 API" 절 참고.
 
 ### 3. API 직접 호출 (curl)
 
@@ -164,7 +162,8 @@ curl localhost:8200/v1/sys/seal-benchmark
 포트포워딩 없이) 접근할 수 없고, 브라우저는 원천적으로 접속할 수
 없습니다. `cmd/admin-api`는 KMS 서버와 별개의 프로세스로 떠서, HTTP로
 받은 `/v1/*` 요청을 경로/메서드/헤더/바디 그대로 admin.sock에 중계합니다
-— 요청을 해석하거나 바꾸지 않는 투명 프록시입니다.
+— 요청을 해석하거나 바꾸지 않는 투명 프록시입니다. 그와 함께 운영자
+콘솔(`/console`)도 서빙합니다.
 
 > ⚠️ **인증·TLS 없음.** 이 프로세스는 이번 범위에서 인증도 TLS도 구현하지
 > 않았습니다. HTTP로만 열리고 누구나 요청을 보낼 수 있으므로, 신뢰된
@@ -212,6 +211,36 @@ curl -XPOST localhost:8201/v1/keys -H 'content-type: application/json' \
 curl localhost:8201/healthz
 curl localhost:8201/readyz
 ```
+
+#### 브라우저 접속 (운영자 콘솔)
+
+두 프로세스를 모두 띄운 뒤, 브라우저에서 `http://localhost:8201/console`로
+접속합니다. `/`는 아직 홈 랜딩이 따로 없어 `/console`로 바로 안내(redirect)합니다.
+
+콘솔에서 할 수 있는 것 — 전부 Admin 평면(admin.sock)이라 그대로 동작합니다:
+
+- 서버 초기화(Init) / 봉인 해제(Unseal)
+- 키 생성 / 목록 / 조회 / 회전
+- 정책 설정(`min_decryption_version`, 자동 회전 주기)
+
+콘솔에는 "Seal 특성(참고용)" 카드가 하나 있는데, 이건 Transit 평면
+엔드포인트(`/v1/sys/seal-profile`, `:8200`)를 호출합니다. 관리 API는
+admin.sock만 중계하므로 이 카드는 "이 기능은 Transit API(:8200)가
+필요합니다" 안내만 보여주고 실제로 값을 불러오지는 않습니다 — 콘솔의
+나머지 기능에는 영향이 없습니다.
+
+`/dashboard`, `/portal`은 관리 API에 등록되어 있지 않습니다(404):
+
+- **`/dashboard`**: seal 4종 비교 화면인데, 쓰는 API(`seal-profile`,
+  `seal-benchmark`)가 전부 Transit 평면이라 admin.sock 경유로는 접근할 수
+  없습니다. 벤치마크 실행기(Job)가 직접 측정하고 관리 API가 그 결과를
+  저장·표시하는 구조로 다시 설계한 뒤 연결할 예정입니다.
+- **`/portal`**: 고객용 암복호화 화면으로, 목표 구조에서는 Transit
+  API(`:8200`)를 직접 호출하는 별도 데모 애플리케이션이 됩니다. 관리
+  API(admin.sock 전용)에는 연결하지 않습니다.
+
+두 패키지(`internal/api/dashboard`, `internal/api/portal`) 모두 코드는
+삭제하지 않고 그대로 남겨뒀습니다.
 
 ### 5. 로컬 K8s(kind)에서 K8sSeal 검증
 

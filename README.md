@@ -140,7 +140,9 @@ curl --unix-socket $SOCK -XPOST http://localhost/v1/keys/demo/config \
   -H 'content-type: application/json' -d '{"min_decryption_version":2}'
 ```
 
-**Transit(데이터 평면)** — 네트워크(TCP, 기본 `:8200`)로 호출합니다.
+**Transit(데이터 평면)** — 네트워크(TCP, 기본 `:8200`)로 호출합니다. 아래
+예시는 기본값(`KMS_AUTHN=off`) 기준이며, 인증을 켠 경우는 "5. Transit API
+인증" 절을 참고하세요.
 
 ```bash
 # 암호화
@@ -242,7 +244,71 @@ admin.sock만 중계하므로 이 카드는 "이 기능은 Transit API(:8200)가
 두 패키지(`internal/api/dashboard`, `internal/api/portal`) 모두 코드는
 삭제하지 않고 그대로 남겨뒀습니다.
 
-### 5. 로컬 K8s(kind)에서 K8sSeal 검증
+### 5. Transit API 인증 (ServiceAccount 토큰, 1단계: 인증만)
+
+Transit API(`:8200`)는 기본적으로 인증이 꺼져 있어(`KMS_AUTHN=off`) 누구나
+호출할 수 있습니다. `KMS_AUTHN=on`으로 켜면 모든 Transit 요청에
+`Authorization: Bearer <ServiceAccount 토큰>` 헤더를 요구합니다. **Admin
+(admin.sock)에는 이 인증이 적용되지 않습니다** — 소켓 파일 권한(`0600`)과
+같은 노드 제약으로 이미 보호되고 있고, 관리 API 인증은 별도 과제입니다.
+
+**1단계는 인증(누구인지 확인)만입니다.** 검증에 성공한 요청은 신원과
+무관하게 모든 키에 접근할 수 있습니다 — "무엇을 할 수 있는지" 판단하는
+인가(authorization, SubjectAccessReview 기반)는 2단계에서 다룹니다.
+
+#### 왜 kube-apiserver의 TokenReview가 아닌가
+
+KMS 서버는 static pod로 배포될 예정입니다. static pod는 kubelet이 매니페스트를
+직접 읽어 생성하므로 kube-apiserver의 admission controller를 거치지 않고,
+그 결과 **ServiceAccount 토큰이 자동 마운트되지 않습니다**
+(`spec.serviceAccountName`을 지정해도 `/var/run/secrets/kubernetes.io/
+serviceaccount/`가 생기지 않습니다). TokenReview를 호출하려면 KMS 자신이
+별도의 자격 증명을 마련해야 하는데, 암복호화는 요청마다 발생하는 핫패스라
+매 요청 apiserver 왕복은 지연 측면에서도 부적합합니다.
+
+대신 KMS가 컨트롤 플레인 노드에 static pod로 배치된다는 점을 활용해,
+ServiceAccount 토큰(kube-apiserver가 서명한 JWT)의 서명을 컨트롤 플레인
+노드에 있는 서명 공개키(`/etc/kubernetes/pki/sa.pub`)로 **로컬에서 직접**
+검증합니다.
+
+> ⚠️ **한계: 토큰 폐기(revocation) 여부는 확인할 수 없습니다.** 서명이
+> 유효하고 만료(`exp`)되지 않았다면, apiserver가 그 사이 해당 토큰을
+> 무효화했더라도(예: Pod/ServiceAccount 삭제) 로컬 검증은 통과시킵니다.
+> TokenReview를 호출하지 않는 이상 이 한계는 구조적으로 남습니다 — 짧은
+> `exp`를 쓰는 projected 토큰(TokenRequest API 기본값)을 쓰면 노출 시간을
+> 줄일 수 있습니다.
+
+#### 환경변수
+
+| 변수 | 기본값 | 설명 |
+|---|---|---|
+| `KMS_AUTHN` | `off` | `off`\|`on`. off면 인증 없이 전부 통과(경고 로그 남김). on이면 아래 키 로딩에 실패할 경우 기동 자체를 실패시킨다 |
+| `KMS_SA_PUBLIC_KEY` | `/etc/kubernetes/pki/sa.pub` | 서명 검증용 공개키 경로. **쉼표로 여러 개** 지정 가능(`a.pub,b.pub`) — apiserver 서명키 회전 중 새/이전 키가 동시에 유효한 기간을 지원하기 위함 |
+| `KMS_SA_ISSUER` | (없음) | 설정하면 토큰의 `iss` 클레임이 이 값과 일치해야 한다. 비어 있으면 검사하지 않는다 |
+| `KMS_SA_AUDIENCE` | (없음) | 설정하면 토큰의 `aud` 클레임에 이 값이 포함돼야 한다. 비어 있으면 검사하지 않는다 |
+
+지원 알고리즘은 RS256/ES256뿐입니다(`alg: none`, HMAC 계열은 항상 거부).
+레거시 토큰(자동 마운트 시크릿, `exp`/`nbf`/`iat` 없음)과 projected
+토큰(TokenRequest API, `kubernetes.io` 클레임 아래 namespace/서비스어카운트
+이름) 둘 다 지원합니다.
+
+#### curl 예시
+
+```bash
+# 클러스터 안에서: 파드에 마운트된 토큰을 그대로 사용
+TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+
+curl -H "Authorization: Bearer $TOKEN" \
+  -XPOST localhost:8200/v1/encrypt/demo -H 'content-type: application/json' \
+  -d "{\"plaintext\":\"$(echo -n 'hello' | base64)\"}"
+
+# 토큰 없이 호출하면 (KMS_AUTHN=on일 때)
+curl -XPOST localhost:8200/v1/encrypt/demo -H 'content-type: application/json' \
+  -d "{\"plaintext\":\"$(echo -n 'hello' | base64)\"}"
+# -> 401 {"error":"unauthorized"}
+```
+
+### 6. 로컬 K8s(kind)에서 K8sSeal 검증
 
 ```bash
 kind create cluster --name kms-dev

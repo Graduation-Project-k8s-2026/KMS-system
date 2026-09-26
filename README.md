@@ -46,7 +46,7 @@ Root Key (seal이 보호, 메모리에만 존재)
 3. (진행 예정) `go mod init github.com/Graduation-Project-k8s-2026/KMS-system`
 
 ## 프로젝트 구조 (예정)
-cmd/server/            KMS 서버 실행 진입점 (main.go) — Transit(TCP)/Admin(유닉스 소켓) 두 리스너를 함께 기동
+cmd/server/            KMS 서버 실행 진입점 (main.go) — Transit(TCP)/Admin(유닉스 소켓)/Metrics(TCP) 세 리스너를 함께 기동
 cmd/admin-api/         관리 API 프로세스 실행 진입점 — HTTP로 받아 admin.sock으로 중계
 internal/crypto/       AES-GCM, 봉투암호화 로직
 internal/keys/         키 생성/조회/회전/버전 관리
@@ -57,6 +57,9 @@ internal/api/transit/  데이터 평면 — 암호화/복호화/rewrap, seal 비
 internal/api/admin/    관리 평면 — 키 관리, init/unseal/seal-status (유닉스 소켓 전용)
 internal/api/console/, portal/, dashboard/, home/  웹 UI (현재 비활성 — 아래 "웹 UI" 절 참고)
 internal/adminapi/     관리 API 프로세스의 라우팅/프록시 로직 (admin.sock 투명 중계, /healthz, /readyz)
+internal/authn/        Transit 요청자 인증 (ServiceAccount 토큰 로컬 서명 검증)
+internal/authz/        Transit 요청자 인가 (SubjectAccessReview 기반)
+internal/metrics/      Prometheus 지표 정의 + 계측 미들웨어/collector (전용 /metrics 리스너)
 docs/                  리서치 노트, 설계 근거 등 코드 외 문서
 
 ## 브랜치 & 협업 전략
@@ -97,6 +100,7 @@ KMS_SEAL_TYPE=dev KMS_MASTER_KEY=change-me KMS_STORAGE=memory go run ./cmd/serve
 | `KMS_TRANSIT_ADDR` | `:8200` | Transit(데이터 평면) TCP 리스너 주소 |
 | `PORT` | `8200` | `KMS_TRANSIT_ADDR`가 비어 있을 때만 쓰이는 하위호환 변수 (포트 번호만) |
 | `KMS_ADMIN_SOCKET` | `/var/run/kms/admin.sock` | Admin(관리 평면) 유닉스 도메인 소켓 경로. 부모 디렉터리가 없으면 생성하고, 이전 실행이 남긴 소켓 파일(stale socket)이 있으면 지우고 다시 바인딩합니다. 파일 권한은 `0600`. |
+| `KMS_METRICS_ADDR` | `:9100` | Prometheus 메트릭(`/metrics`) TCP 리스너 주소. 빈 문자열로 명시적으로 설정하면 비활성화됩니다. 자세한 내용은 "7. 메트릭(Prometheus)" 절 참고 |
 
 기타: `KMS_STORAGE`(`memory`\|`file`, 기본 `file`), `KMS_DATA_DIR`(기본 `./data`)
 
@@ -431,7 +435,75 @@ roleRef:
 이 이상의 권한(키 목록 조회, Secret 접근 등)은 필요 없습니다 — KMS는
 SAR "질의"만 하고, RBAC 규칙 자체를 읽거나 쓰지 않습니다.
 
-### 7. 로컬 K8s(kind)에서 K8sSeal 검증
+### 7. 메트릭 (Prometheus)
+
+KMS는 세 번째 리스너로 `/metrics`를 서빙합니다 — Transit(`:8200`)이나
+Admin(admin.sock)과는 별개의 전용 포트입니다.
+
+> ⚠️ **인증 없음.** 이 리스너에는 인증을 붙이지 않았습니다(의도적 —
+> Prometheus가 KMS_AUTHN과 무관하게 항상 수집할 수 있어야 합니다).
+> 대신 루프백에만 바인딩하지 않으므로(쿠버네티스에서 Prometheus는 다른
+> 파드), **반드시 네트워크 정책(NetworkPolicy)으로 이 포트에 접근할 수
+> 있는 파드를 Prometheus로 제한하세요.** 신뢰되지 않은 네트워크에
+> 노출하면 안 됩니다.
+
+#### 환경변수
+
+| 변수 | 기본값 | 설명 |
+|---|---|---|
+| `KMS_METRICS_ADDR` | `:9100` | 메트릭 리스너 주소. **빈 문자열로 명시적으로 설정하면**(`KMS_METRICS_ADDR=""`) 리스너 자체를 기동하지 않는다 — 설정하지 않은 경우(기본값 사용)와는 다르다 |
+
+#### 노출되는 메트릭
+
+**암복호화(Transit, `internal/api/transit`에서 계측)**
+
+| 이름 | 종류 | 라벨 | 의미 |
+|---|---|---|---|
+| `kms_transit_requests_total` | Counter | `operation`(encrypt/decrypt/rewrap), `result`(success/error) | Transit 요청 수 |
+| `kms_transit_request_duration_seconds` | Histogram | `operation` | 요청 처리 시간(초). 버킷은 1µs~10s를 20구간으로 로그 등분 — 실제 연산이 마이크로초~저밀리초 단위이기 때문 |
+| `kms_transit_payload_bytes` | Histogram | `operation` | 처리한 평문/암호문 크기(바이트). 64B~128KB, 2배씩 12구간 |
+
+**인가(`internal/authz`에서 계측 — 캐싱 효과 확인용)**
+
+| 이름 | 종류 | 라벨 | 의미 |
+|---|---|---|---|
+| `kms_authz_sar_requests_total` | Counter | `result`(allowed/denied/error) | SubjectAccessReview 호출 수 |
+| `kms_authz_sar_duration_seconds` | Histogram | (없음) | SubjectAccessReview 호출 지연(초) |
+| `kms_authz_cache_requests_total` | Counter | `result`(hit/miss) | 인가 판단 캐시 조회 수 — hit 비율이 곧 apiserver 왕복을 얼마나 줄였는지를 보여준다 |
+| `kms_authz_cache_entries` | Gauge | (없음) | 현재 캐시에 들어있는 항목 수 |
+
+**seal/키 현황(`internal/metrics.SealKeyCollector` — 스크레이프 시점에 조회)**
+
+| 이름 | 종류 | 의미 |
+|---|---|---|
+| `kms_seal_sealed` | Gauge | 1=sealed, 0=unsealed |
+| `kms_seal_last_unsealed_timestamp_seconds` | Gauge | 이 프로세스가 unsealed를 마지막으로 관찰한 시각(Unix epoch). 한 번도 못 봤으면 0. barrier.Unseal() 호출 시각이 아니라 스크레이프 시점에 처음 감지한 시각이라 약간 늦을 수 있다 |
+| `kms_keys_total` | Gauge | 현재 등록된 키 개수. sealed 상태에서는 조회할 수 없어 0 |
+| `kms_key_versions_total` | Gauge | 모든 키의 버전 총합(회전 횟수 포함). sealed면 0 |
+
+**Go 런타임 / 프로세스 메트릭**: `go_*`, `process_*` — client_golang이 기본으로 제공하는 고루틴 수, GC, 메모리, 파일 디스크립터 등.
+
+절대 노출하지 않는 값: 키 이름, 키 자료, 평문, 암호문, 토큰, 주체(subject) 이름, 네임스페이스 이름. 인가 메트릭도 주체/네임스페이스를 라벨로 쓰지 않습니다 — cardinality 폭발과 정보 노출 양쪽을 막기 위함입니다.
+
+#### 확인 방법 (curl)
+
+```bash
+curl localhost:9100/metrics
+
+# 특정 지표만
+curl -s localhost:9100/metrics | grep '^kms_transit_requests_total'
+```
+
+#### Prometheus scrape 설정 예시
+
+```yaml
+scrape_configs:
+  - job_name: kms
+    static_configs:
+      - targets: ["kms-server.kms-system.svc:9100"]
+```
+
+### 8. 로컬 K8s(kind)에서 K8sSeal 검증
 
 ```bash
 kind create cluster --name kms-dev

@@ -27,6 +27,7 @@ import (
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/authn"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/authz"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/barrier"
+	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/metrics"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/seal"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/transit"
 )
@@ -85,15 +86,18 @@ func NewRouter(deps Deps) http.Handler {
 	r.Get("/v1/sys/seal-benchmark", handleSealBenchmark())
 
 	// 암복호화는 Root Key가 메모리에 있어야만 의미가 있으므로 sealed 가드를
-	// 적용한다. 인가는 라우트별로 다른 verb(encrypt/decrypt/rewrap)가
-	// 필요해 r.Use로 그룹 전체에 걸 수 없으므로, 라우트마다 r.With로
-	// 개별 적용한다.
+	// 적용한다. 계측(metrics.InstrumentTransit)과 인가는 라우트별로 다른
+	// operation/verb(encrypt/decrypt/rewrap)가 필요해 r.Use로 그룹 전체에
+	// 걸 수 없으므로, 라우트마다 r.With로 개별 적용한다. metrics를 바깥쪽에
+	// 둬 인가 판단(캐시 조회/SAR 호출)까지 포함한 전체 처리 시간을 재고,
+	// 요청 수(operation, result별)를 센다 — 핸들러 코드 자체는 건드리지
+	// 않는다.
 	r.Group(func(r chi.Router) {
 		r.Use(httputil.SealedGuard(deps.Barrier))
 
-		r.With(authzMiddleware(deps.Authorizer, "encrypt")).Post("/v1/encrypt/{name}", handleEncrypt(deps))
-		r.With(authzMiddleware(deps.Authorizer, "decrypt")).Post("/v1/decrypt/{name}", handleDecrypt(deps))
-		r.With(authzMiddleware(deps.Authorizer, "rewrap")).Post("/v1/rewrap/{name}", handleRewrap(deps))
+		r.With(metrics.InstrumentTransit("encrypt"), authzMiddleware(deps.Authorizer, "encrypt")).Post("/v1/encrypt/{name}", handleEncrypt(deps))
+		r.With(metrics.InstrumentTransit("decrypt"), authzMiddleware(deps.Authorizer, "decrypt")).Post("/v1/decrypt/{name}", handleDecrypt(deps))
+		r.With(metrics.InstrumentTransit("rewrap"), authzMiddleware(deps.Authorizer, "rewrap")).Post("/v1/rewrap/{name}", handleRewrap(deps))
 	})
 
 	return r
@@ -190,6 +194,7 @@ func handleEncrypt(deps Deps) http.HandlerFunc {
 			httputil.WriteError(w, err, http.StatusInternalServerError)
 			return
 		}
+		metrics.TransitPayloadBytes.WithLabelValues("encrypt").Observe(float64(len(plaintext)))
 		httputil.WriteJSON(w, http.StatusOK, encryptResponse{Ciphertext: ciphertext})
 	}
 }
@@ -213,6 +218,7 @@ func handleDecrypt(deps Deps) http.HandlerFunc {
 			httputil.WriteError(w, err, http.StatusBadRequest)
 			return
 		}
+		metrics.TransitPayloadBytes.WithLabelValues("decrypt").Observe(float64(len(plaintext)))
 		httputil.WriteJSON(w, http.StatusOK, decryptResponse{Plaintext: base64.StdEncoding.EncodeToString(plaintext)})
 	}
 }
@@ -235,6 +241,7 @@ func handleRewrap(deps Deps) http.HandlerFunc {
 			httputil.WriteError(w, err, http.StatusBadRequest)
 			return
 		}
+		metrics.TransitPayloadBytes.WithLabelValues("rewrap").Observe(float64(len(newCiphertext)))
 		httputil.WriteJSON(w, http.StatusOK, rewrapResponse{Ciphertext: newCiphertext})
 	}
 }

@@ -10,6 +10,7 @@ import (
 	authzv1client "k8s.io/client-go/kubernetes/typed/authorization/v1"
 
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/authn"
+	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/metrics"
 )
 
 // defaultCacheTTL: 캐시 항목이 살아있는 기본 시간. 짧게 잡은 이유: 이
@@ -87,8 +88,10 @@ func (a *Authorizer) Allowed(ctx context.Context, identity authn.Identity, resou
 	key := cacheKey{subject: identity.Subject, namespace: identity.Namespace, name: resourceName, verb: verb}
 
 	if allowed, fresh := a.cache.get(key); fresh {
+		metrics.AuthzCacheRequestsTotal.WithLabelValues("hit").Inc()
 		return allowed
 	}
+	metrics.AuthzCacheRequestsTotal.WithLabelValues("miss").Inc()
 
 	reqCtx, cancel := context.WithTimeout(ctx, a.cfg.Timeout)
 	defer cancel()
@@ -107,8 +110,12 @@ func (a *Authorizer) Allowed(ctx context.Context, identity authn.Identity, resou
 		},
 	}
 
+	start := time.Now()
 	result, err := a.client.Create(reqCtx, sar, metav1.CreateOptions{})
+	metrics.AuthzSARDuration.Observe(time.Since(start).Seconds())
+
 	if err != nil {
+		metrics.AuthzSARRequestsTotal.WithLabelValues("error").Inc()
 		slog.Error("authz: SubjectAccessReview call failed",
 			"subject", identity.Subject, "namespace", identity.Namespace,
 			"key", resourceName, "verb", verb, "error", err, "fail_open", a.cfg.FailOpen)
@@ -117,8 +124,12 @@ func (a *Authorizer) Allowed(ctx context.Context, identity authn.Identity, resou
 
 	allowed := result.Status.Allowed
 	a.cache.set(key, allowed)
+	metrics.AuthzCacheEntries.Set(float64(a.cache.size()))
 
-	if !allowed {
+	if allowed {
+		metrics.AuthzSARRequestsTotal.WithLabelValues("allowed").Inc()
+	} else {
+		metrics.AuthzSARRequestsTotal.WithLabelValues("denied").Inc()
 		slog.Warn("authz: denied",
 			"subject", identity.Subject, "namespace", identity.Namespace,
 			"key", resourceName, "verb", verb, "reason", result.Status.Reason)

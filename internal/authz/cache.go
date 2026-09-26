@@ -76,3 +76,11 @@ func (c *ttlCache) evictExpiredLocked() {
 		}
 	}
 }
+
+// size는 현재 캐시에 들어있는 항목 수를 반환한다(만료됐지만 아직
+// evict되지 않은 항목도 포함) — kms_authz_cache_entries 게이지에 쓴다.
+func (c *ttlCache) size() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.entries)
+}

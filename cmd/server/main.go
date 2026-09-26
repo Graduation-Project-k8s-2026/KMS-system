@@ -3,7 +3,7 @@
 // 결정하고 서로 연결하는" 책임은 main에 있고, "요청을 어떻게 처리할지"는
 // api 패키지의 책임이다.
 //
-// 서버는 두 개의 독립된 리스너를 동시에 띄운다:
+// 서버는 세 개의 독립된 리스너를 동시에 띄운다:
 //   - Transit(데이터 평면): TCP, KMS_TRANSIT_ADDR(기본 :8200) — 네트워크로
 //     열려 사용자 애플리케이션이 암복호화를 요청한다.
 //   - Admin(관리 평면): 유닉스 도메인 소켓, KMS_ADMIN_SOCKET(기본
@@ -11,11 +11,20 @@
 //     init/unseal을 수행한다. 브라우저는 유닉스 소켓에 접속할 수 없으므로
 //     웹 UI(console/portal/dashboard/home)는 어느 리스너에도 등록하지
 //     않는다 — 관리 API(HTTPS -> admin.sock 중계)가 생기기 전까지는 비활성.
+//   - Metrics: TCP, KMS_METRICS_ADDR(기본 :9100) — Prometheus가 스크레이프.
+//     Transit에 두지 않는 이유: KMS_AUTHN=on이면 Prometheus도 토큰이
+//     필요해지고, 메트릭이 애플리케이션 트래픽과 같은 경로로 노출된다.
+//     전용 포트로 분리하면 인증과 무관하게 수집할 수 있고, 네트워크
+//     정책으로 Prometheus만 접근하도록 제한하기 쉽다. 이 리스너에는 인증을
+//     붙이지 않는다 — 대신 메트릭에 민감 정보(키 자료, 토큰, 평문 등)가
+//     절대 포함되지 않게 하고(internal/metrics 패키지 주석 참고),
+//     README에 네트워크 정책으로 접근을 제한하라고 명시한다.
 package main
 
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -28,6 +37,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/google/go-tpm-tools/simulator"
 	tpm2 "github.com/google/go-tpm/legacy/tpm2"
 
@@ -37,6 +48,7 @@ import (
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/authz"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/barrier"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/keys"
+	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/metrics"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/rotation"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/seal"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/storage"
@@ -63,6 +75,8 @@ func main() {
 		transitAddr = ":" + getenvDefault("PORT", "8200")
 	}
 	adminSocketPath := getenvDefault("KMS_ADMIN_SOCKET", "/var/run/kms/admin.sock")
+
+	metricsAddr, metricsEnabled := resolveMetricsAddr()
 
 	// newStorage는 barrier용 storage와, TPMSeal 전용 storage(barrier와는
 	// 완전히 별개 — 이유는 internal/seal/tpm.go의 store 필드 주석 참고)를
@@ -200,7 +214,17 @@ func main() {
 		ShamirThreshold: shamirThreshold,
 	})
 
-	// 두 리스너 모두 바인딩을 먼저 동기적으로 끝낸다 — 기동 실패는 goroutine을
+	// namedServer는 리스너 하나를 이름과 함께 묶어, 시작/종료를 반복문으로
+	// 처리할 수 있게 한다. Metrics 리스너는 KMS_METRICS_ADDR=""이면 아예
+	// 만들지 않으므로(비활성화), 리스너 개수가 2개일 때와 3개일 때를 모두
+	// 같은 코드로 다뤄야 한다.
+	type namedServer struct {
+		name     string
+		srv      *http.Server
+		listener net.Listener
+	}
+
+	// 모든 리스너의 바인딩을 먼저 동기적으로 끝낸다 — 기동 실패는 goroutine을
 	// 띄우기 전에 여기서 바로 드러나야 "리스너 중 하나라도 기동 실패하면
 	// 명확한 에러와 함께 종료"할 수 있다.
 	transitListener, err := net.Listen("tcp", transitAddr)
@@ -213,47 +237,89 @@ func main() {
 	}
 	defer os.Remove(adminSocketPath)
 
-	transitSrv := &http.Server{Handler: transitRouter}
-	adminSrv := &http.Server{Handler: adminRouter}
+	servers := []namedServer{
+		{"transit", &http.Server{Handler: transitRouter}, transitListener},
+		{"admin", &http.Server{Handler: adminRouter}, adminListener},
+	}
 
-	log.Printf("kms-system starting: transit=%s admin=%s storage=%s seal=%s sealed=%v",
-		transitAddr, adminSocketPath, storageKind, sealer.Type(), b.IsSealed())
+	metricsStatus := "disabled (KMS_METRICS_ADDR=\"\")"
+	if metricsEnabled {
+		registerMetricsCollectors(b, km)
+		metricsListener, err := net.Listen("tcp", metricsAddr)
+		if err != nil {
+			log.Fatalf("failed to listen on metrics address %q: %v", metricsAddr, err)
+		}
+		servers = append(servers, namedServer{"metrics", &http.Server{Handler: metrics.NewHandler()}, metricsListener})
+		metricsStatus = metricsAddr
+	}
 
-	serverErrs := make(chan error, 2)
+	log.Printf("kms-system starting: transit=%s admin=%s metrics=%s storage=%s seal=%s sealed=%v",
+		transitAddr, adminSocketPath, metricsStatus, storageKind, sealer.Type(), b.IsSealed())
+
+	serverErrs := make(chan error, len(servers))
 	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		if err := transitSrv.Serve(transitListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			serverErrs <- err
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		if err := adminSrv.Serve(adminListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			serverErrs <- err
-		}
-	}()
+	wg.Add(len(servers))
+	for _, s := range servers {
+		s := s
+		go func() {
+			defer wg.Done()
+			if err := s.srv.Serve(s.listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				serverErrs <- fmt.Errorf("%s: %w", s.name, err)
+			}
+		}()
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	select {
 	case <-ctx.Done():
-		log.Print("shutdown signal received, shutting down both listeners")
+		log.Print("shutdown signal received, shutting down all listeners")
 	case err := <-serverErrs:
-		log.Printf("listener failed: %v; shutting down both listeners", err)
+		log.Printf("listener failed: %v; shutting down all listeners", err)
 	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
-	if err := transitSrv.Shutdown(shutdownCtx); err != nil {
-		log.Printf("transit listener shutdown error: %v", err)
-	}
-	if err := adminSrv.Shutdown(shutdownCtx); err != nil {
-		log.Printf("admin listener shutdown error: %v", err)
+	for _, s := range servers {
+		if err := s.srv.Shutdown(shutdownCtx); err != nil {
+			log.Printf("%s listener shutdown error: %v", s.name, err)
+		}
 	}
 	wg.Wait()
+}
+
+// resolveMetricsAddr는 KMS_METRICS_ADDR의 세 가지 상태를 구분한다:
+//   - 아예 설정하지 않음 -> 기본값 :9100으로 활성화
+//   - 값을 줌(빈 문자열이 아님) -> 그 값으로 활성화
+//   - 빈 문자열로 명시적으로 설정함(KMS_METRICS_ADDR="") -> 비활성화
+//
+// getenvDefault(os.Getenv 기반)는 "설정 안 함"과 "빈 값으로 설정함"을
+// 구분하지 못해 세 번째 상태(명시적 비활성화)를 표현할 수 없으므로,
+// os.LookupEnv를 직접 쓴다.
+func resolveMetricsAddr() (addr string, enabled bool) {
+	v, set := os.LookupEnv("KMS_METRICS_ADDR")
+	if !set {
+		return ":9100", true
+	}
+	if v == "" {
+		return "", false
+	}
+	return v, true
+}
+
+// registerMetricsCollectors는 seal/키 현황 collector(internal/metrics.
+// SealKeyCollector)를 prometheus.DefaultRegisterer(promhttp.Handler()가
+// 서빙하는 것과 같은 레지스트리)에 등록한다.
+//
+// Go 런타임 기본 메트릭(고루틴 수, GC 등)과 프로세스 메트릭(CPU/메모리/
+// 파일디스크립터)은 여기서 따로 등록하지 않는다 — client_golang이
+// DefaultRegisterer를 초기화할 때(prometheus 패키지의 init()) 이미
+// NewGoCollector/NewProcessCollector를 등록해두므로, 다시 등록하면
+// "중복 등록" 에러로 패닉한다. 암복호화/인가 지표도 internal/metrics의
+// promauto 전역 변수라 이미 등록돼 있어 여기서 손댈 게 없다.
+func registerMetricsCollectors(b *barrier.Barrier, km *keys.KeyManager) {
+	prometheus.MustRegister(metrics.NewSealKeyCollector(b, km))
 }
 
 // buildAuthnVerifier는 KMS_AUTHN에 따라 Transit 라우터에 붙일 인증 검증기를

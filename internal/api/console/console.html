@@ -637,7 +637,11 @@ document.getElementById('create-key-form').addEventListener('submit', async (e) 
 
 async function loadSealProfile() {
   const el = document.getElementById('profile-card');
-  const { ok, data } = await api('GET', '/v1/sys/seal-profile');
+  const { ok, status, data } = await api('GET', '/v1/sys/seal-profile');
+  if (status === 404) {
+    el.innerHTML = '<div class="error-msg">이 기능은 Transit API(:8200)가 필요합니다 — 관리 API(admin.sock 프록시)에는 없습니다.</div>';
+    return;
+  }
   if (!ok || !data) {
     el.innerHTML = '<div class="error-msg">seal-profile을 불러오지 못했습니다</div>';
     return;

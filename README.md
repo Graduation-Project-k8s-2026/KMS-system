@@ -46,7 +46,8 @@ Root Key (seal이 보호, 메모리에만 존재)
 3. (진행 예정) `go mod init github.com/Graduation-Project-k8s-2026/KMS-system`
 
 ## 프로젝트 구조 (예정)
-cmd/server/            실행 진입점 (main.go) — Transit(TCP)/Admin(유닉스 소켓) 두 리스너를 함께 기동
+cmd/server/            KMS 서버 실행 진입점 (main.go) — Transit(TCP)/Admin(유닉스 소켓) 두 리스너를 함께 기동
+cmd/admin-api/         관리 API 프로세스 실행 진입점 — HTTP로 받아 admin.sock으로 중계
 internal/crypto/       AES-GCM, 봉투암호화 로직
 internal/keys/         키 생성/조회/회전/버전 관리
 internal/seal/         루트 키 보호 (Seal 인터페이스 + 구현체)
@@ -55,6 +56,7 @@ internal/api/httputil/ 두 평면이 공유하는 JSON 응답 헬퍼, 에러 매
 internal/api/transit/  데이터 평면 — 암호화/복호화/rewrap, seal 비교·벤치마크 (TCP로 노출)
 internal/api/admin/    관리 평면 — 키 관리, init/unseal/seal-status (유닉스 소켓 전용)
 internal/api/console/, portal/, dashboard/, home/  웹 UI (현재 비활성 — 아래 "웹 UI" 절 참고)
+internal/adminapi/     관리 API 프로세스의 라우팅/프록시 로직 (admin.sock 투명 중계, /healthz, /readyz)
 docs/                  리서치 노트, 설계 근거 등 코드 외 문서
 
 ## 브랜치 & 협업 전략
@@ -105,10 +107,12 @@ KMS_SEAL_TYPE=dev KMS_MASTER_KEY=change-me KMS_STORAGE=memory go run ./cmd/serve
 등록되지 않습니다.
 
 이유: 관리 기능(키 생성, init/unseal 등)이 유닉스 소켓(`admin.sock`)으로
-옮겨갔는데, 브라우저는 유닉스 소켓에 직접 접속할 수 없습니다. 이후 별도
-프로세스로 "관리 API"(HTTPS를 받아 admin.sock으로 중계)가 추가되면, 그때
-웹 UI를 그쪽으로 옮겨 다시 활성화할 예정입니다. 그 전까지는 아래 curl
-예시처럼 admin.sock을 직접 호출해야 합니다.
+옮겨갔는데, 브라우저는 유닉스 소켓에 직접 접속할 수 없습니다. 아래 "4.
+관리 API" 절에서 다루는 별도 프로세스가 HTTP를 받아 admin.sock으로
+중계하지만, 이 프로세스는 아직 `/v1/*` 프록시와 `/healthz`/`/readyz`만
+제공하고 웹 UI는 서빙하지 않습니다 — 웹 UI를 그쪽으로 옮기는 작업은
+다음 단계입니다. 그 전까지는 아래 curl 예시처럼 admin.sock/관리 API를
+직접 호출해야 합니다.
 
 ### 3. API 직접 호출 (curl)
 
@@ -154,7 +158,62 @@ curl localhost:8200/v1/sys/seal-profile
 curl localhost:8200/v1/sys/seal-benchmark
 ```
 
-### 4. 로컬 K8s(kind)에서 K8sSeal 검증
+### 4. 관리 API — HTTP로 admin.sock 중계
+
+`admin.sock`은 유닉스 소켓이라 같은 노드가 아니면(예: 별도 머신에서
+포트포워딩 없이) 접근할 수 없고, 브라우저는 원천적으로 접속할 수
+없습니다. `cmd/admin-api`는 KMS 서버와 별개의 프로세스로 떠서, HTTP로
+받은 `/v1/*` 요청을 경로/메서드/헤더/바디 그대로 admin.sock에 중계합니다
+— 요청을 해석하거나 바꾸지 않는 투명 프록시입니다.
+
+> ⚠️ **인증·TLS 없음.** 이 프로세스는 이번 범위에서 인증도 TLS도 구현하지
+> 않았습니다. HTTP로만 열리고 누구나 요청을 보낼 수 있으므로, 신뢰된
+> 네트워크(예: 같은 노드/네임스페이스 안) 밖에는 절대 노출하지 마세요.
+> 기동 시 이 사실을 경고 로그로도 남깁니다.
+
+두 프로세스를 함께 띄우는 예시 (터미널 두 개):
+
+```bash
+# 터미널 1: KMS 서버 (admin.sock을 만든다)
+KMS_SEAL_TYPE=dev KMS_MASTER_KEY=change-me KMS_STORAGE=memory go run ./cmd/server
+
+# 터미널 2: 관리 API (KMS 서버가 뜬 뒤 — admin.sock이 있어야 기동된다)
+go run ./cmd/admin-api
+```
+
+관리 API 환경변수:
+
+| 변수 | 기본값 | 설명 |
+|---|---|---|
+| `ADMIN_API_ADDR` | `:8201` | 관리 API가 HTTP를 수신할 주소 |
+| `KMS_ADMIN_SOCKET` | `/var/run/kms/admin.sock` | 중계할 admin.sock 경로. 시작 시 이 경로에 파일이 없으면(= KMS 서버가 아직 안 떴을 가능성) 명확한 에러와 함께 기동을 실패시킨다 |
+
+상태 확인 엔드포인트:
+
+- `GET /healthz` — 관리 API 프로세스 자체의 생존만 확인 (admin.sock을 건드리지 않음)
+- `GET /readyz` — admin.sock에 실제로 연결 가능한지 확인해 200/503 반환
+
+관리 API를 거쳐 HTTP로 admin.sock을 호출하는 예시 (직접
+`curl --unix-socket`을 쓰는 대신):
+
+```bash
+# 상태 확인
+curl localhost:8201/v1/sys/seal-status
+
+# 초기화 및 봉인 해제 (dev 기준)
+curl -XPOST localhost:8201/v1/sys/init
+curl -XPOST localhost:8201/v1/sys/unseal
+
+# 키 생성
+curl -XPOST localhost:8201/v1/keys -H 'content-type: application/json' \
+  -d '{"name":"demo"}'
+
+# 관리 API 자체 상태
+curl localhost:8201/healthz
+curl localhost:8201/readyz
+```
+
+### 5. 로컬 K8s(kind)에서 K8sSeal 검증
 
 ```bash
 kind create cluster --name kms-dev

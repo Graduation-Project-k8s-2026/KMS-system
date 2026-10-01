@@ -34,10 +34,12 @@
 
 ### 관측성
 - [x] Prometheus 메트릭 (전용 포트, 인증 없음 — 네트워크 정책으로 접근 제한)
+- [x] 성능 측정 도구 (`cmd/bench` — 로컬 실행 CLI, 처리량/지연/페이로드/동시성/접근 제어 오버헤드 측정)
 
 ### 진행 예정
 - [ ] gRPC KMS Provider (kube-apiserver가 etcd Secret 암호화에 사용)
 - [ ] 쿠버네티스 배포 (static pod 매니페스트)
+- [ ] `cmd/bench`를 쿠버네티스 Job으로 포장 + 관리 대시보드 연동
 - [ ] 감사 로그
 - [ ] 데모 앱 분리, 관리 대시보드 재설계
 
@@ -77,6 +79,7 @@ Root Key (seal이 보호, 메모리에만 존재)
 ## 프로젝트 구조 (예정)
 cmd/server/            KMS 서버 실행 진입점 (main.go) — Transit(TCP)/Admin(유닉스 소켓)/Metrics(TCP) 세 리스너를 함께 기동
 cmd/admin-api/         관리 API 프로세스 실행 진입점 — HTTP로 받아 admin.sock으로 중계
+cmd/bench/             성능 측정 CLI — Transit API에 부하를 걸어 처리량/지연 측정 (서버 코드 아님, 외부 HTTP 클라이언트)
 internal/crypto/       AES-GCM, 봉투암호화 로직
 internal/keys/         키 생성/조회/회전/버전 관리
 internal/seal/         루트 키 보호 (Seal 인터페이스 + 구현체)
@@ -89,6 +92,7 @@ internal/adminapi/     관리 API 프로세스의 라우팅/프록시 로직 (ad
 internal/authn/        Transit 요청자 인증 (ServiceAccount 토큰 로컬 서명 검증)
 internal/authz/        Transit 요청자 인가 (SubjectAccessReview 기반)
 internal/metrics/      Prometheus 지표 정의 + 계측 미들웨어/collector (전용 /metrics 리스너)
+internal/bench/        cmd/bench의 측정 로직 (HTTP 클라이언트, worker pool 실행기, 백분위 집계, 결과 포맷)
 docs/                  리서치 노트, 설계 근거 등 코드 외 문서
 
 ## 브랜치 & 협업 전략
@@ -105,6 +109,7 @@ docs/                  리서치 노트, 설계 근거 등 코드 외 문서
 | [docs/decisions.md](docs/decisions.md) | 설계 결정 기록(ADR) — 각 결정의 배경과 근거 |
 | [docs/usage.md](docs/usage.md) | 기능별 상세 사용법, 환경변수 전체 목록 |
 | [docs/verification.md](docs/verification.md) | 기능 검증 체크리스트 |
+| [docs/benchmark.md](docs/benchmark.md) | 성능 측정 도구(cmd/bench) 사용법, 접근 제어 오버헤드 비교 실험 절차 |
 | [docs/vault-practice/](docs/vault-practice/) | 사전 리서치 — Vault 실습 기록 (Day 1~6) |
 
 - 리서치/조사 자료는 별도 레포 [`Study-Research`](https://github.com/Graduation-Project-k8s-2026/Study-Research)에서 관리
@@ -547,3 +552,18 @@ KMS_SEAL_TYPE=k8s KMS_STORAGE=memory go run ./cmd/server
 # 다른 터미널에서 위 admin.sock curl 호출로 init/unseal 후:
 kubectl get secret kms-root-key -o yaml
 ```
+
+### 9. 성능 측정 (`cmd/bench`)
+
+Prometheus 메트릭이 "운영 중 무슨 일이 일어났는가"를 수동적으로 기록한다면,
+`cmd/bench`는 인위적으로 부하를 걸어 조건을 통제한 상태에서 측정하는 CLI다.
+Transit API만 HTTP로 호출하는 외부 클라이언트이고, 키를 만들거나 서버
+설정을 바꾸지 않는다 — 측정 전 키를 직접 만들어 둬야 한다.
+
+```bash
+go run ./cmd/bench --key bench-demo --scenario all --format json --output result.json
+```
+
+플래그 전체 목록, 접근 제어 오버헤드 비교 실험(서버를 네 가지 설정으로
+각각 띄워 측정하는 절차), 결과 해석 방법은
+[docs/benchmark.md](docs/benchmark.md)에 정리했다.

@@ -6,6 +6,7 @@
 | [decisions.md](decisions.md) | 설계 결정 기록(ADR) — 각 결정의 배경과 근거 |
 | [usage.md](usage.md) | 기능별 상세 사용법, 환경변수 전체 목록 |
 | [verification.md](verification.md) | 기능 검증 체크리스트 (M0~M10) |
+| [benchmark.md](benchmark.md) | 성능 측정 도구(cmd/bench) 사용법, 접근 제어 오버헤드 비교 실험 절차 |
 | [vault-practice/](vault-practice/) | 사전 리서치 — HashiCorp Vault 실습 기록 (Day 1~6) |
 
 ## 읽는 순서

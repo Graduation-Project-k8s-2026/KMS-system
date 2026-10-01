@@ -34,7 +34,14 @@ const defaultMaxCacheEntries = 10000
 
 // Config는 Authorizer의 동작을 정한다.
 type Config struct {
-	// TTL: 캐시 항목의 유효 기간. 0이면 defaultCacheTTL을 쓴다.
+	// TTL: 캐시 항목의 유효 기간.
+	//   - 0 (기본값, 설정 안 함): defaultCacheTTL(10초)을 쓴다 — 하위호환을
+	//     위해 기존 동작을 그대로 유지한다.
+	//   - 양수: 그 값을 그대로 쓴다.
+	//   - 음수: 캐시를 완전히 비활성화한다 — 조회·저장을 모두 건너뛰고 매
+	//     요청 apiserver에 SubjectAccessReview를 묻는다. 캐싱 효과를
+	//     분리해서 측정하는 성능 실험이나, 권한 변경이 즉시 반영돼야 하는
+	//     환경에서 쓴다.
 	TTL time.Duration
 	// Timeout: SubjectAccessReview 호출 하나의 타임아웃. 0이면
 	// defaultTimeout을 쓴다.
@@ -49,17 +56,21 @@ type Config struct {
 
 // Authorizer는 SubjectAccessReview로 "이 주체가 이 키에 이 동작을 해도
 // 되는가"를 판단한다. 판단 결과는 캐싱한다 — 암복호화는 요청마다 일어나는
-// 핫패스라 매번 apiserver를 왕복하면 지연이 크다.
+// 핫패스라 매번 apiserver를 왕복하면 지연이 크다. cache가 nil이면(Config.TTL
+// 이 음수로 설정된 경우) 캐싱 자체를 하지 않는다 — Allowed가 매번 nil
+// 체크로 그 경로를 건너뛴다.
 type Authorizer struct {
 	client authzv1client.SubjectAccessReviewInterface
-	cache  *ttlCache
+	cache  *ttlCache // nil이면 캐시 비활성화(Config.TTL < 0)
 	cfg    Config
 }
 
 // NewAuthorizer는 client(보통 kubernetes.Interface의
 // AuthorizationV1().SubjectAccessReviews())와 cfg로 Authorizer를 만든다.
 func NewAuthorizer(client authzv1client.SubjectAccessReviewInterface, cfg Config) *Authorizer {
-	if cfg.TTL <= 0 {
+	cacheDisabled := cfg.TTL < 0
+
+	if cfg.TTL == 0 {
 		cfg.TTL = defaultCacheTTL
 	}
 	if cfg.Timeout <= 0 {
@@ -68,9 +79,15 @@ func NewAuthorizer(client authzv1client.SubjectAccessReviewInterface, cfg Config
 	if cfg.MaxCacheEntries <= 0 {
 		cfg.MaxCacheEntries = defaultMaxCacheEntries
 	}
+
+	var cache *ttlCache
+	if !cacheDisabled {
+		cache = newTTLCache(cfg.TTL, cfg.MaxCacheEntries)
+	}
+
 	return &Authorizer{
 		client: client,
-		cache:  newTTLCache(cfg.TTL, cfg.MaxCacheEntries),
+		cache:  cache,
 		cfg:    cfg,
 	}
 }
@@ -87,10 +104,14 @@ func NewAuthorizer(client authzv1client.SubjectAccessReviewInterface, cfg Config
 func (a *Authorizer) Allowed(ctx context.Context, identity authn.Identity, resourceName, verb string) bool {
 	key := cacheKey{subject: identity.Subject, namespace: identity.Namespace, name: resourceName, verb: verb}
 
-	if allowed, fresh := a.cache.get(key); fresh {
-		metrics.AuthzCacheRequestsTotal.WithLabelValues("hit").Inc()
-		return allowed
+	if a.cache != nil {
+		if allowed, fresh := a.cache.get(key); fresh {
+			metrics.AuthzCacheRequestsTotal.WithLabelValues("hit").Inc()
+			return allowed
+		}
 	}
+	// 캐시가 비활성화됐을 때도(a.cache == nil) miss를 그대로 기록한다 —
+	// 매 요청이 miss로 집계되는 것 자체가 "캐시가 꺼져 있다"는 신호다.
 	metrics.AuthzCacheRequestsTotal.WithLabelValues("miss").Inc()
 
 	reqCtx, cancel := context.WithTimeout(ctx, a.cfg.Timeout)
@@ -123,8 +144,10 @@ func (a *Authorizer) Allowed(ctx context.Context, identity authn.Identity, resou
 	}
 
 	allowed := result.Status.Allowed
-	a.cache.set(key, allowed)
-	metrics.AuthzCacheEntries.Set(float64(a.cache.size()))
+	if a.cache != nil {
+		a.cache.set(key, allowed)
+		metrics.AuthzCacheEntries.Set(float64(a.cache.size()))
+	}
 
 	if allowed {
 		metrics.AuthzSARRequestsTotal.WithLabelValues("allowed").Inc()

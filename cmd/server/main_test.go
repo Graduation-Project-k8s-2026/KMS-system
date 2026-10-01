@@ -115,3 +115,25 @@ func TestListenUnixSocket_ServesHTTPOverSocket(t *testing.T) {
 		t.Fatal("sealed = false, want true (no unseal called yet)")
 	}
 }
+
+// TestGetenvIntDefault_AcceptsNegative는 getenvIntDefault가 음수를 거부하지
+// 않는지 확인한다 — KMS_AUTHZ_CACHE_TTL=-1로 인가 캐시를 비활성화하는
+// 수단이 strconv.Atoi 단계에서부터 막히지 않아야 한다.
+func TestGetenvIntDefault_AcceptsNegative(t *testing.T) {
+	t.Setenv("KMS_TEST_GETENV_INT", "-1")
+	if got := getenvIntDefault("KMS_TEST_GETENV_INT", 10); got != -1 {
+		t.Fatalf("getenvIntDefault = %d, want -1", got)
+	}
+}
+
+// TestGetenvDurationSecondsDefault_AcceptsNegative는
+// getenvDurationSecondsDefault(KMS_AUTHZ_CACHE_TTL/KMS_AUTHZ_TIMEOUT이
+// 쓰는 헬퍼)가 음수 초를 음수 time.Duration으로 그대로 변환하는지 확인한다.
+func TestGetenvDurationSecondsDefault_AcceptsNegative(t *testing.T) {
+	t.Setenv("KMS_TEST_GETENV_DURATION", "-1")
+	got := getenvDurationSecondsDefault("KMS_TEST_GETENV_DURATION", 10)
+	want := -1 * time.Second
+	if got != want {
+		t.Fatalf("getenvDurationSecondsDefault = %v, want %v", got, want)
+	}
+}

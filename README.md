@@ -32,10 +32,12 @@
 - [x] 인증 — ServiceAccount 토큰 로컬 JWT 서명 검증
 - [x] 인가 — SubjectAccessReview 기반 (쿠버네티스 RBAC 연동)
 
+### 관측성
+- [x] Prometheus 메트릭 (전용 포트, 인증 없음 — 네트워크 정책으로 접근 제한)
+
 ### 진행 예정
 - [ ] gRPC KMS Provider (kube-apiserver가 etcd Secret 암호화에 사용)
 - [ ] 쿠버네티스 배포 (static pod 매니페스트)
-- [ ] Prometheus 메트릭
 - [ ] 감사 로그
 - [ ] 데모 앱 분리, 관리 대시보드 재설계
 

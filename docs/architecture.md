@@ -88,6 +88,18 @@ kms:v1:<base64>
 Prometheus 수집 전용. 인증 없음. 민감 정보(키 이름, 토큰, 주체)를 라벨에 포함하지 않는다.
 네트워크 정책으로 접근을 제한해야 한다.
 
+| 엔드포인트 | 인증 | 인가 |
+|---|---|---|
+| `GET /metrics` | 불필요 | 불필요 |
+
+계측 위치는 코어 패키지를 건드리지 않는 쪽을 택했다: 암복호화 요청 수/지연/
+payload 크기는 `internal/api/transit`의 미들웨어·핸들러에서, 인가(SAR/캐시)
+지표는 `internal/authz`에서 직접 기록한다. seal 상태와 키/버전 현황은
+상시 갱신하지 않고 `/metrics` 요청이 올 때마다 `internal/metrics.
+SealKeyCollector`가 `barrier.IsSealed()`/`keys.ListKeys()`/`GetKeyMeta()`를
+그대로 호출해 조회한다. 노출 지표 전체 목록과 버킷 설계 근거는
+`README.md`의 "7. 메트릭(Prometheus)" 절 참고.
+
 ---
 
 ## 요청 경로

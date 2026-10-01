@@ -14,11 +14,30 @@
 - [x] 키 회전 (수동 + 자동 주기)
 - [x] min_decryption_version (버전 이하 복호화 차단)
 
-### 다음 단계 (미확정 / 논의 예정)
-- rewrap (평문 노출 없는 재암호화)
-- 감사 로그
-- 루트 키 보호 방식 (Shamir / K8s Secret / 외부 클라우드 KMS 위임)
-- K8s 통합 및 접근 제어 (RBAC 연동, 정책 방식)
+## 구현 현황
+
+### 코어
+- [x] 봉투 암호화 (Root Key / KEK / DEK 3단 계층)
+- [x] 키 생성 / 조회 / 목록
+- [x] 암호화 / 복호화 / rewrap
+- [x] 키 회전 (수동 + 자동 주기)
+- [x] min_decryption_version (버전 이하 복호화 차단)
+- [x] 루트 키 보호 4종 (dev / shamir / tpm / k8s)
+
+### API 구조
+- [x] Transit / Admin 평면 분리 (TCP / 유닉스 소켓)
+- [x] 관리 API (admin.sock → HTTP 중계, 별도 프로세스)
+
+### 접근 제어
+- [x] 인증 — ServiceAccount 토큰 로컬 JWT 서명 검증
+- [x] 인가 — SubjectAccessReview 기반 (쿠버네티스 RBAC 연동)
+
+### 진행 예정
+- [ ] gRPC KMS Provider (kube-apiserver가 etcd Secret 암호화에 사용)
+- [ ] 쿠버네티스 배포 (static pod 매니페스트)
+- [ ] Prometheus 메트릭
+- [ ] 감사 로그
+- [ ] 데모 앱 분리, 관리 대시보드 재설계
 
 ## 아키텍처 개요
 
@@ -29,6 +48,14 @@ Root Key (seal이 보호, 메모리에만 존재)
 
 - 저장 백엔드(`StorageBackend`)와 루트 키 보호 방식(`Seal`)은 인터페이스로 분리되어 있어, 나중에 구현체만 교체 가능.
 - 상세 설계는 코드 내 주석 및 `docs/` 참고.
+
+서버는 하나의 코어 위에 여러 입구를 둔다. 입구마다 노출 범위와 검문 수준이 다르다.
+관리자 → :8201 (관리 API) → admin.sock ──┐
+├→ [KMS 코어]
+앱 → :8200 (Transit) → 인증 → 인가 ────┘
+
+자세한 내용은 [docs/architecture.md](docs/architecture.md) 참고.
+
 
 ## 기술 스택
 
@@ -43,7 +70,7 @@ Root Key (seal이 보호, 메모리에만 존재)
 ```bash
    git clone https://github.com/Graduation-Project-k8s-2026/KMS-system.git
 ```
-3. (진행 예정) `go mod init github.com/Graduation-Project-k8s-2026/KMS-system`
+
 
 ## 프로젝트 구조 (예정)
 cmd/server/            KMS 서버 실행 진입점 (main.go) — Transit(TCP)/Admin(유닉스 소켓) 두 리스너를 함께 기동
@@ -67,8 +94,15 @@ docs/                  리서치 노트, 설계 근거 등 코드 외 문서
 
 ## 문서
 
+| 문서 | 내용 |
+|---|---|
+| [docs/architecture.md](docs/architecture.md) | 전체 구조, 키 계층, 평면 분리, 접근 제어 |
+| [docs/decisions.md](docs/decisions.md) | 설계 결정 기록(ADR) — 각 결정의 배경과 근거 |
+| [docs/usage.md](docs/usage.md) | 기능별 상세 사용법, 환경변수 전체 목록 |
+| [docs/verification.md](docs/verification.md) | 기능 검증 체크리스트 |
+| [docs/vault-practice/](docs/vault-practice/) | 사전 리서치 — Vault 실습 기록 (Day 1~6) |
+
 - 리서치/조사 자료는 별도 레포 [`Study-Research`](https://github.com/Graduation-Project-k8s-2026/Study-Research)에서 관리
-- Vault 실습 기록: `docs/vault-practice/`
 
 ## 사용법 (로컬 실행)
 

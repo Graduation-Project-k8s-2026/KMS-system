@@ -90,13 +90,13 @@ rewrap     1KB      1     6149.6    0.14ms  0.17ms  0.25ms  0.44ms  0.44ms  0
 | baseline | `KMS_AUTHN=off KMS_AUTHZ=off` | `baseline` |
 | authn only | `KMS_AUTHN=on KMS_AUTHZ=off` | `authn-only` |
 | authz cached | `KMS_AUTHN=on KMS_AUTHZ=on KMS_AUTHZ_CACHE_TTL=10` | `authz-cached` |
-| authz uncached | `KMS_AUTHN=on KMS_AUTHZ=on KMS_AUTHZ_CACHE_TTL=1` | `authz-uncached` |
+| authz uncached | `KMS_AUTHN=on KMS_AUTHZ=on KMS_AUTHZ_CACHE_TTL=-1` | `authz-uncached` |
 
-> `KMS_AUTHZ_CACHE_TTL`은 초 단위 정수만 받는다(`internal/authz`가 0 이하를
-> 기본값으로 대체하므로 "0에 가깝게"는 실질적으로 `1`이 최솟값이다). TTL이
-> 측정 시간보다 훨씬 짧아야(매 요청이 사실상 캐시 미스가 되어야) "uncached"
-> 조건이 의미가 있다 — `--count`/`--duration`을 TTL 대비 충분히 길게 잡거나,
-> `--concurrency`를 높여 TTL 안에 캐시가 많이 돌아가지 않게 한다.
+> `KMS_AUTHZ_CACHE_TTL`은 초 단위 정수만 받는다(`10s`처럼 단위를 붙이면
+> 기동이 실패한다). **음수를 주면 캐시가 완전히 비활성화**되어 매 요청마다
+> apiserver에 SAR을 묻는다 — "uncached" 조건은 짧은 TTL로 흉내 내지 말고
+> 이 값을 쓴다. `0`은 "설정 안 함"과 같은 뜻으로 기본값(10초)이 적용되므로
+> uncached 조건에 실수로 `0`을 쓰지 않도록 주의한다.
 
 절차:
 
@@ -121,7 +121,7 @@ go run ./cmd/bench --key bench-demo --token-file /path/to/token \
   --label authz-cached --format json --output authz-cached.json
 
 # 4) authz uncached
-KMS_AUTHN=on KMS_AUTHZ=on KMS_AUTHZ_CACHE_TTL=1 ... go run ./cmd/server
+KMS_AUTHN=on KMS_AUTHZ=on KMS_AUTHZ_CACHE_TTL=-1 ... go run ./cmd/server
 go run ./cmd/bench --key bench-demo --token-file /path/to/token \
   --label authz-uncached --format json --output authz-uncached.json
 ```

@@ -65,12 +65,16 @@ go run ./cmd/admin-api
 |---|---|---|
 | `KMS_AUTHZ` | `off` | `on`이면 SAR로 권한 판단 |
 | `KMS_KUBECONFIG` | — | apiserver 접근용. 비면 in-cluster 설정 시도 |
-| `KMS_AUTHZ_CACHE_TTL` | `10s` | 판단 결과 캐시 수명 |
-| `KMS_AUTHZ_TIMEOUT` | `3s` | SAR 호출 타임아웃 |
+| `KMS_AUTHZ_CACHE_TTL` | `10`(초) | 판단 결과 캐시 수명. **초 단위 정수**만 받는다(`10s`처럼 단위를 붙이면 기동에 실패한다). `0`은 기본값(10초) 사용, **음수를 주면 캐시를 완전히 비활성화**한다(매 요청마다 apiserver에 SAR을 묻는다) |
+| `KMS_AUTHZ_TIMEOUT` | `3`(초) | SAR 호출 타임아웃. 역시 초 단위 정수만 받는다 |
 | `KMS_AUTHZ_FAIL_OPEN` | `false` | apiserver 장애 시 허용 여부 |
 
 > `KMS_AUTHZ=on`인데 `KMS_AUTHN=off`이면 기동에 실패한다.
 > 신원 없이는 권한을 판단할 수 없다.
+>
+> `KMS_AUTHZ_CACHE_TTL`을 음수로 주고 기동하면 로그에
+> `authorization cache is disabled (KMS_AUTHZ_CACHE_TTL < 0) — every request queries the apiserver`가
+> 남는다 — 성능에 큰 영향을 주는 설정이라 눈에 띄게 남긴다.
 
 ### 관리 API
 

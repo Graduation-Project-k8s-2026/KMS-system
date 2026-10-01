@@ -433,7 +433,7 @@ ServiceAccount는 `demo` 키에 `encrypt`/`decrypt`만 할 수 있고, `rewrap`�
 |---|---|---|
 | `KMS_AUTHZ` | `off` | `off`\|`on`. off면 인증만 통과하면 모든 키에 접근 가능(경고 로그 남김). **`KMS_AUTHN=off`인데 `KMS_AUTHZ=on`이면 기동을 실패시킨다** — 신원 없이는 권한을 판단할 수 없다 |
 | `KMS_KUBECONFIG` | (없음) | kube-apiserver 접속용 kubeconfig 파일 경로. 비어 있으면 in-cluster 설정을 시도한다. 둘 다 실패하면 기동을 실패시킨다 |
-| `KMS_AUTHZ_CACHE_TTL` | `10`(초) | SAR 판단 결과(허용/거부 둘 다)를 캐싱하는 시간. 짧을수록 권한 회수가 반영되는 지연이 줄지만 apiserver 호출이 늘어난다 |
+| `KMS_AUTHZ_CACHE_TTL` | `10`(초) | SAR 판단 결과(허용/거부 둘 다)를 캐싱하는 시간. 짧을수록 권한 회수가 반영되는 지연이 줄지만 apiserver 호출이 늘어난다. **음수를 주면 캐시를 완전히 비활성화**한다(매 요청 SAR 호출) — 기동 로그에 경고가 남는다 |
 | `KMS_AUTHZ_TIMEOUT` | `3`(초) | SAR 호출 하나에 허용하는 최대 시간 |
 | `KMS_AUTHZ_FAIL_OPEN` | `false` | apiserver 호출 자체가 실패했을 때(타임아웃 등, 캐시 미스 상태) 거부(기본, fail-closed) 대신 허용할지. `true`면 기동 시 경고 로그를 남긴다 |
 

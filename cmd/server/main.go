@@ -388,8 +388,16 @@ func buildAuthzAuthorizer(authnEnabled bool) (*authz.Authorizer, error) {
 			return nil, err
 		}
 
+		// KMS_AUTHZ_CACHE_TTL이 음수면 authz.Authorizer가 캐시를 완전히
+		// 비활성화한다(매 요청 apiserver에 SAR을 묻는다) — 성능에 큰 영향을
+		// 주는 설정이므로 기동 로그에 눈에 띄게 남긴다.
+		cacheTTL := getenvDurationSecondsDefault("KMS_AUTHZ_CACHE_TTL", 10)
+		if cacheTTL < 0 {
+			log.Print("authorization cache is disabled (KMS_AUTHZ_CACHE_TTL < 0) — every request queries the apiserver")
+		}
+
 		return authz.NewAuthorizer(client.AuthorizationV1().SubjectAccessReviews(), authz.Config{
-			TTL:      getenvDurationSecondsDefault("KMS_AUTHZ_CACHE_TTL", 10),
+			TTL:      cacheTTL,
 			Timeout:  getenvDurationSecondsDefault("KMS_AUTHZ_TIMEOUT", 3),
 			FailOpen: failOpen,
 		}), nil

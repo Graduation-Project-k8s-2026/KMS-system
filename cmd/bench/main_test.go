@@ -216,6 +216,111 @@ func TestRun_OutputFile(t *testing.T) {
 	}
 }
 
+// --- --submit: 가짜 관리 API로 제출을 확인하고, 실패해도 결과가 유지되는지 확인 ---
+
+func TestParseFlags_SubmitMustBeHTTPURL(t *testing.T) {
+	var stderr bytes.Buffer
+	if _, err := parseFlags([]string{"--key", "demo", "--submit", "not-a-url"}, &stderr); err == nil {
+		t.Fatal("--submit with a non-URL value succeeded, want error")
+	}
+	cfg, err := parseFlags([]string{"--key", "demo", "--submit", "http://admin:8201/"}, &stderr)
+	if err != nil || cfg.Submit != "http://admin:8201" {
+		t.Fatalf("Submit = %q, err = %v", cfg.Submit, err)
+	}
+}
+
+func TestRun_Submit_SendsResultToAdminAPI(t *testing.T) {
+	transit := newFakeTransitServer(t, "demo")
+	defer transit.Close()
+
+	var got struct {
+		Label string `json:"label"`
+		Runs  []struct {
+			SuccessCount int `json:"success_count"`
+		} `json:"runs"`
+	}
+	var posts int
+	admin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" && r.URL.Path == "/api/bench/results" {
+			posts++
+			_ = json.NewDecoder(r.Body).Decode(&got)
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":"fake-id","runs":1}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer admin.Close()
+
+	var stdout, stderr bytes.Buffer
+	err := run([]string{
+		"--addr", transit.URL, "--key", "demo", "--op", "encrypt", "--count", "10", "--warmup", "2",
+		"--label", "submitted", "--submit", admin.URL,
+	}, &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("run failed: %v (stderr: %s)", err, stderr.String())
+	}
+	if posts != 1 || got.Label != "submitted" || len(got.Runs) != 1 || got.Runs[0].SuccessCount != 10 {
+		t.Fatalf("posts=%d body=%+v", posts, got)
+	}
+	if !strings.Contains(stderr.String(), "fake-id") {
+		t.Errorf("stderr should confirm the submission:\n%s", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "OPERATION") { // --format은 table 그대로
+		t.Errorf("table output must still be printed:\n%s", stdout.String())
+	}
+}
+
+func TestRun_Submit_FailureKeepsOutputAndOnlyWarns(t *testing.T) {
+	transit := newFakeTransitServer(t, "demo")
+	defer transit.Close()
+
+	cases := map[string]string{}
+	rejecting := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"disk full"}`))
+	}))
+	defer rejecting.Close()
+	cases["server error"] = rejecting.URL
+
+	dead := httptest.NewServer(http.NotFoundHandler())
+	cases["unreachable"] = dead.URL
+	dead.Close()
+
+	for name, submitURL := range cases {
+		path := t.TempDir() + "/report.json"
+		var stdout, stderr bytes.Buffer
+		err := run([]string{
+			"--addr", transit.URL, "--key", "demo", "--op", "encrypt", "--count", "5", "--warmup", "1",
+			"--format", "json", "--output", path, "--submit", submitURL,
+		}, &stdout, &stderr)
+		if err != nil {
+			t.Fatalf("%s: run must succeed even if submit fails, got %v", name, err)
+		}
+		data, rerr := os.ReadFile(path)
+		if rerr != nil || !strings.Contains(string(data), `"operation": "encrypt"`) {
+			t.Errorf("%s: --output file must still be written (err=%v)", name, rerr)
+		}
+		if !strings.Contains(stderr.String(), "warning") || !strings.Contains(stderr.String(), "--submit") {
+			t.Errorf("%s: expected a warning on stderr, got:\n%s", name, stderr.String())
+		}
+	}
+}
+
+func TestRun_Submit_FailureStillPrintsStdoutTable(t *testing.T) {
+	transit := newFakeTransitServer(t, "demo")
+	defer transit.Close()
+	dead := httptest.NewServer(http.NotFoundHandler())
+	deadURL := dead.URL
+	dead.Close()
+
+	var stdout, stderr bytes.Buffer
+	err := run([]string{"--addr", transit.URL, "--key", "demo", "--op", "encrypt", "--count", "5", "--warmup", "1", "--submit", deadURL}, &stdout, &stderr)
+	if err != nil || !strings.Contains(stdout.String(), "OPERATION") {
+		t.Fatalf("err=%v stdout=%q", err, stdout.String())
+	}
+}
+
 // newFakeTransitServer는 encrypt/decrypt/rewrap을 최소한으로 흉내 내는
 // httptest 서버를 만든다 — internal/bench 패키지의 가짜 서버와 별개로,
 // cmd/bench의 run()이 플래그 파싱부터 출력까지 실제로 엮이는지 확인하는

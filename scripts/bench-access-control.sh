@@ -27,6 +27,9 @@
 #   OP        작업 (기본 encrypt)
 #   PAYLOAD   평문 크기 (기본 1KB)
 #   OUT       결과 디렉터리 (기본 ~/workspace/active/bench-results/<시각>)
+#   SUBMIT    관리 API 주소(예: http://localhost:8201). 지정하면 조건별 결과를
+#             측정 직후 POST /api/bench/results로 제출한다(대시보드에서 비교용).
+#             제출이 실패해도 실험은 계속되고 결과 파일은 그대로 저장된다.
 # =============================================================================
 set -euo pipefail
 
@@ -39,6 +42,7 @@ LEVELS="${LEVELS:-1,10,50}"
 DURATION="${DURATION:-10s}"
 OP="${OP:-encrypt}"
 PAYLOAD="${PAYLOAD:-1KB}"
+SUBMIT="${SUBMIT:-}"
 KEY="demo"
 OUT="${OUT:-$HOME/workspace/active/bench-results/$(date +%Y%m%d-%H%M%S)}"
 
@@ -110,11 +114,13 @@ run_condition() {
 
   local tokargs=()
   [[ "$use_token" == yes ]] && tokargs=(--token-file "$TOKEN")
+  local submitargs=()
+  [[ -n "$SUBMIT" ]] && submitargs=(--submit "$SUBMIT")
 
   log "[$CURRENT] 측정 (동시성 $LEVELS, 각 $DURATION)"
   "$BIN/kms-bench" --key "$KEY" --op "$OP" --payload "$PAYLOAD" \
     --scenario concurrency --concurrency-levels "$LEVELS" --duration "$DURATION" \
-    "${tokargs[@]}" --label "$CURRENT" \
+    "${tokargs[@]}" "${submitargs[@]}" --label "$CURRENT" \
     --format json --output "$OUT/$CURRENT.json"
 
   curl -s http://127.0.0.1:9100/metrics >"$OUT/metrics-$CURRENT.txt"
@@ -173,6 +179,7 @@ echo "    $BIN/kms-server, $BIN/kms-bench"
   echo "kind_k8s:    $(kubectl --context "$CTX" get nodes -o jsonpath='{.items[0].status.nodeInfo.kubeletVersion}')"
   echo "params:      op=$OP payload=$PAYLOAD levels=$LEVELS duration=$DURATION"
   echo "conditions:  $CONDS"
+  echo "submit:      ${SUBMIT:-(none)}"
 } >"$OUT/meta.txt"
 
 # -----------------------------------------------------------------------------

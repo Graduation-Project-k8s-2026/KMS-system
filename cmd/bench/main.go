@@ -103,6 +103,25 @@ func run(args []string, stdout, stderr io.Writer) error {
 		report.Runs = append(report.Runs, bench.NewRunReport(result))
 	}
 
+	writeErr := writeReport(cfg, report, stdout)
+
+	// 제출은 측정 결과 출력·저장이 끝난 뒤에 한다. 실패해도 이미 만든
+	// 결과는 그대로이고, 경고만 남긴다.
+	if cfg.Submit != "" {
+		submitCtx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
+		id, err := bench.Submit(submitCtx, &http.Client{Timeout: cfg.Timeout}, cfg.Submit, report)
+		cancel()
+		if err != nil {
+			fmt.Fprintf(stderr, "bench: warning: --submit to %s failed: %v (results above are unaffected)\n", cfg.Submit, err)
+		} else {
+			fmt.Fprintf(stderr, "bench: submitted result %q to %s\n", id, cfg.Submit)
+		}
+	}
+	return writeErr
+}
+
+// writeReport는 --output 파일(없으면 stdout)에 --format 형식으로 결과를 쓴다.
+func writeReport(cfg cliConfig, report bench.Report, stdout io.Writer) error {
 	out := stdout
 	if cfg.Output != "" {
 		f, err := os.Create(cfg.Output)
@@ -112,7 +131,6 @@ func run(args []string, stdout, stderr io.Writer) error {
 		defer f.Close()
 		out = f
 	}
-
 	if cfg.Format == "json" {
 		return bench.WriteJSON(out, report)
 	}
@@ -147,6 +165,9 @@ type cliConfig struct {
 	Format string
 	Output string
 
+	// Submit: 결과를 제출할 관리 API 주소(빈 값이면 제출 안 함).
+	Submit string
+
 	Keepalive bool
 	Timeout   time.Duration
 }
@@ -171,6 +192,7 @@ func parseFlags(args []string, stderr io.Writer) (cliConfig, error) {
 	label := fs.String("label", "", "free-form condition label attached to the output (e.g. \"authz-cached\")")
 	format := fs.String("format", "table", "output format: table|json")
 	output := fs.String("output", "", "output file path (default: stdout)")
+	submit := fs.String("submit", "", "admin API base URL (e.g. http://localhost:8201); after measuring, POST the JSON result to /api/bench/results. A failed submit only prints a warning")
 	keepalive := fs.Bool("keepalive", true, "reuse HTTP connections (disable to measure the cost of a fresh connection per request)")
 	timeout := fs.Duration("timeout", 30*time.Second, "per-request HTTP timeout")
 
@@ -226,6 +248,14 @@ func parseFlags(args []string, stderr io.Writer) (cliConfig, error) {
 		return cliConfig{}, fmt.Errorf("--concurrency-levels: %w", err)
 	}
 
+	submitURL := ""
+	if *submit != "" {
+		submitURL, err = bench.ParseSubmitURL(*submit)
+		if err != nil {
+			return cliConfig{}, fmt.Errorf("--submit: %w", err)
+		}
+	}
+
 	resolvedToken := *token
 	if *tokenFile != "" {
 		data, err := os.ReadFile(*tokenFile)
@@ -251,6 +281,7 @@ func parseFlags(args []string, stderr io.Writer) (cliConfig, error) {
 		Label:               *label,
 		Format:              *format,
 		Output:              *output,
+		Submit:              submitURL,
 		Keepalive:           *keepalive,
 		Timeout:             *timeout,
 	}, nil

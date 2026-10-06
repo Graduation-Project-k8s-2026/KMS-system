@@ -383,7 +383,23 @@ func buildAuthzAuthorizer(authnEnabled bool) (*authz.Authorizer, error) {
 			log.Print("KMS_AUTHZ_FAIL_OPEN=true — Transit requests will be ALLOWED if the SubjectAccessReview call to apiserver fails")
 		}
 
-		client, err := authz.NewClientFromEnv(os.Getenv("KMS_KUBECONFIG"))
+		// KMS_AUTHZ_QPS/KMS_AUTHZ_BURST — authz 클라이언트가 apiserver에
+		// SAR을 보내는 속도 상한. 설정하지 않으면(0) authz.DefaultQPS/
+		// DefaultBurst(50/100)를 쓴다. 둘 중 하나라도 음수면 속도 제한을
+		// 완전히 끈다 — ResolveRateLimit을 여기서 먼저 불러 로그에 "실제
+		// 적용될 값"을 남기고, 같은 raw qps/burst를 NewClientFromEnv에도
+		// 그대로 넘겨 거기서도 동일하게(다시) 해석하게 한다 — 순수 함수라
+		// 두 번 불러도 결과가 달라지지 않는다.
+		qps := float32(getenvIntDefault("KMS_AUTHZ_QPS", int(authz.DefaultQPS)))
+		burst := getenvIntDefault("KMS_AUTHZ_BURST", authz.DefaultBurst)
+		effQPS, effBurst, rateLimitDisabled := authz.ResolveRateLimit(qps, burst)
+		if rateLimitDisabled {
+			log.Print("authz client-side rate limiting is disabled (KMS_AUTHZ_QPS/KMS_AUTHZ_BURST < 0) — every SAR call is sent to the apiserver immediately; its own API Priority and Fairness is the only remaining protection")
+		} else {
+			log.Printf("authz client rate limit: QPS=%v Burst=%d", effQPS, effBurst)
+		}
+
+		client, err := authz.NewClientFromEnv(os.Getenv("KMS_KUBECONFIG"), qps, burst)
 		if err != nil {
 			return nil, err
 		}

@@ -97,6 +97,18 @@ rewrap     1KB      1     6149.6    0.14ms  0.17ms  0.25ms  0.44ms  0.44ms  0
 > apiserver에 SAR을 묻는다 — "uncached" 조건은 짧은 TTL로 흉내 내지 말고
 > 이 값을 쓴다. `0`은 "설정 안 함"과 같은 뜻으로 기본값(10초)이 적용되므로
 > uncached 조건에 실수로 `0`을 쓰지 않도록 주의한다.
+>
+> ⚠️ **"authz uncached" 조건은 `KMS_AUTHZ_QPS`/`KMS_AUTHZ_BURST`(기본
+> 50/100, ADR-008)의 영향을 직접 받는다.** 캐시가 꺼져 있으니 측정 중
+> 요청 전부가 실제 SAR 호출이 되고, `--concurrency`나 `--count`가 Burst(100)를
+> 넘기는 순간부터는 처리량이 apiserver 응답 속도가 아니라 **클라이언트
+> 쪽 속도 제한(QPS=50)에 의해 정확히 50 ops/sec 근처로 고정**된다 — 이건
+> 버그가 아니라 의도한 동작이다(이 ADR이 고치려는 바로 그 가용성 버그를
+> 재발시키지 않기 위한 장치). apiserver 자체의 처리 능력을 측정하고 싶다면
+> `KMS_AUTHZ_QPS`/`KMS_AUTHZ_BURST`를 그 실험 동안만 넉넉히 올리거나(둘
+> 다 양수로), 음수로 꺼서 클라이언트 쪽 제한을 없앤 채로 돌려라 — 다만
+> 끄면 apiserver를 과도하게 두드릴 수 있으니 APF가 있는 실제 클러스터에서,
+> 그리고 짧게만 그렇게 측정하는 것을 권장한다.
 
 절차:
 
@@ -131,6 +143,11 @@ go run ./cmd/bench --key bench-demo --token-file /path/to/token \
 캐시 미스)가 더한 오버헤드를 분리해 볼 수 있다. authz uncached 쪽의 지연
 상승분은 거의 그대로 `kms_authz_sar_duration_seconds`(Prometheus)가 보여주는
 SAR 왕복 시간과 맞아떨어져야 한다 — 두 도구의 결과가 서로 교차 검증이 된다.
+그 지연이 예상보다 훨씬 크고 일정한 값(예: 정확히 200ms 근처)으로 몰려
+있다면, 먼저 `kms_authz_sar_duration_seconds`와 `kms_authz_apiserver_
+roundtrip_seconds`(순수 HTTP 왕복만 측정)를 비교해봐라 — 전자가 후자보다
+훨씬 크면 apiserver가 느린 게 아니라 **클라이언트 쪽 rate limiter 대기**다
+(ADR-008에서 바로 이 패턴으로 버그를 찾았다).
 
 ---
 

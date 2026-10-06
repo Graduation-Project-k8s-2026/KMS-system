@@ -436,6 +436,8 @@ ServiceAccount는 `demo` 키에 `encrypt`/`decrypt`만 할 수 있고, `rewrap`�
 | `KMS_AUTHZ_CACHE_TTL` | `10`(초) | SAR 판단 결과(허용/거부 둘 다)를 캐싱하는 시간. 짧을수록 권한 회수가 반영되는 지연이 줄지만 apiserver 호출이 늘어난다. **음수를 주면 캐시를 완전히 비활성화**한다(매 요청 SAR 호출) — 기동 로그에 경고가 남는다 |
 | `KMS_AUTHZ_TIMEOUT` | `3`(초) | SAR 호출 하나에 허용하는 최대 시간 |
 | `KMS_AUTHZ_FAIL_OPEN` | `false` | apiserver 호출 자체가 실패했을 때(타임아웃 등, 캐시 미스 상태) 거부(기본, fail-closed) 대신 허용할지. `true`면 기동 시 경고 로그를 남긴다 |
+| `KMS_AUTHZ_QPS` | `50` | 인가 클라이언트가 apiserver에 SAR을 보내는 초당 요청 수 상한(client-go 기본값 5는 컨트롤러용이라 이 핫패스엔 너무 낮다 — ADR-008). `0`은 기본값, 음수면(Burst와 둘 중 하나라도) 속도 제한을 완전히 비활성화 |
+| `KMS_AUTHZ_BURST` | `100` | 위 QPS의 버스트 용량. 해석 규칙은 `KMS_AUTHZ_QPS`와 같다 |
 
 > ⚠️ **기본은 fail-closed입니다.** apiserver에 물어볼 수 없으면(장애,
 > 타임아웃 등) 기본적으로 거부합니다 — 보안 도구이므로 판단이 안 될 때는

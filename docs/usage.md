@@ -68,6 +68,8 @@ go run ./cmd/admin-api
 | `KMS_AUTHZ_CACHE_TTL` | `10`(초) | 판단 결과 캐시 수명. **초 단위 정수**만 받는다(`10s`처럼 단위를 붙이면 기동에 실패한다). `0`은 기본값(10초) 사용, **음수를 주면 캐시를 완전히 비활성화**한다(매 요청마다 apiserver에 SAR을 묻는다) |
 | `KMS_AUTHZ_TIMEOUT` | `3`(초) | SAR 호출 타임아웃. 역시 초 단위 정수만 받는다 |
 | `KMS_AUTHZ_FAIL_OPEN` | `false` | apiserver 장애 시 허용 여부 |
+| `KMS_AUTHZ_QPS` | `50` | 인가 클라이언트가 apiserver에 SAR을 보내는 초당 요청 수 상한. `0`은 기본값, **음수면(QPS/BURST 둘 중 하나라도) 클라이언트 측 속도 제한을 완전히 비활성화**한다. 근거는 ADR-008 참고 |
+| `KMS_AUTHZ_BURST` | `100` | 위 QPS의 버스트 용량(토큰이 한꺼번에 쌓일 수 있는 최대치). 해석 규칙은 `KMS_AUTHZ_QPS`와 같다 |
 
 > `KMS_AUTHZ=on`인데 `KMS_AUTHN=off`이면 기동에 실패한다.
 > 신원 없이는 권한을 판단할 수 없다.
@@ -75,6 +77,14 @@ go run ./cmd/admin-api
 > `KMS_AUTHZ_CACHE_TTL`을 음수로 주고 기동하면 로그에
 > `authorization cache is disabled (KMS_AUTHZ_CACHE_TTL < 0) — every request queries the apiserver`가
 > 남는다 — 성능에 큰 영향을 주는 설정이라 눈에 띄게 남긴다.
+>
+> `KMS_AUTHZ_QPS`/`KMS_AUTHZ_BURST`를 명시적으로 설정하지 않으면
+> client-go 기본값(QPS 5, Burst 10 — 컨트롤러용)이 아니라 이 값들(50/100)이
+> 적용된다. client-go 기본값이 그대로 쓰이면 캐시 미스가 몰릴 때 요청마다
+> 최대 수백 ms씩 대기하다 `KMS_AUTHZ_TIMEOUT`을 넘겨 정상 요청이 403을
+> 받을 수 있다(ADR-008) — 둘 중 하나라도 음수로 끄면 그 보호가 전부
+> apiserver의 API Priority and Fairness에만 맡겨지므로, 끌 때는 기동
+> 로그의 경고를 확인해야 한다.
 
 ### 관리 API
 

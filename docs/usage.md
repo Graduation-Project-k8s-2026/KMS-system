@@ -92,6 +92,13 @@ go run ./cmd/admin-api
 |---|---|---|
 | `ADMIN_API_ADDR` | `:8201` | 수신 주소 |
 | `KMS_ADMIN_SOCKET` | `/var/run/kms/admin.sock` | 연결할 소켓 |
+| `ADMIN_API_METRICS_URL` | `http://127.0.0.1:9100/metrics` | 대시보드가 수집할 KMS 메트릭 주소. 설정했지만 빈 값이면 수집을 끈다 |
+| `ADMIN_API_METRICS_INTERVAL` | `5` | 메트릭 수집 주기(초, 1 이상 정수) |
+| `ADMIN_API_METRICS_WINDOW` | `15` | 메모리에 보관할 메트릭 길이(분, 1 이상 정수) |
+| `ADMIN_API_BENCH_DIR` | `./admin-data/bench` | 벤치 결과 저장 디렉터리 (`KMS_DATA_DIR` 기본값 `./data`과 겹치지 않게 분리) |
+
+**클러스터 배포 시 `ADMIN_API_METRICS_URL`을 KMS 메트릭 주소로 설정할 것** (기본값 `127.0.0.1`은 관리 API 파드 자신을 가리킴).
+설정하지 않으면 대시보드는 "메트릭 수집 불가"를 표시하고, sealed와 키 개수만 admin.sock에서 대신 가져온다.
 
 ---
 
@@ -294,13 +301,49 @@ rules:
 
 ---
 
+### 운영·성능 대시보드
+
+`http://localhost:8201/dashboard` (관리 API 필요). 세 부분으로 되어 있다.
+
+1. **상태 카드** — sealed/unsealed, 키 수, 키 버전 합계, 마지막 unseal, 메트릭 수집 상태.
+   값마다 출처(`metrics`/`socket`)를 함께 보여준다.
+2. **실시간 트래픽**(5초마다 갱신, 구간 1/5/15분) — 처리량, 에러율, p50/p99 지연,
+   인가 캐시 적중률, SAR 호출/초, SAR 평균 vs apiserver 왕복. 차트마다 "표 보기"가 있다.
+3. **벤치 결과** — 제출된 실행을 목록에서 골라(최대 8개) 같은 동시성 기준으로 처리량·p50·p99를
+   막대와 표로 비교한다. 삭제 버튼이 있다.
+
+**메트릭 수집이 안 될 때**: 화면에 "메트릭 수집 불가"가 뜨고 계속 재시도한다. 이때 sealed와 키
+개수는 admin.sock에서 대신 가져오며(출처 `socket`), 키 버전 합계와 마지막 unseal은 `—`로 표시된다.
+
+**벤치 결과 제출**
+
+```bash
+# 측정 직후 제출 (실패해도 결과 출력·--output 저장은 그대로, 경고만 출력)
+kms-bench --key demo --scenario concurrency --label authz-cached \
+  --submit http://localhost:8201
+
+# 접근 제어 비교 실험 스크립트: 조건별로 자동 제출
+SUBMIT=http://localhost:8201 scripts/bench-access-control.sh
+
+# 직접 제출/조회/삭제
+curl -XPOST localhost:8201/api/bench/results --data-binary @result.json
+curl localhost:8201/api/bench/results
+curl -XDELETE localhost:8201/api/bench/results/<id>
+```
+
+제한: 요청 본문 1MB, `runs` 최대 200개, 저장 500개(넘으면 오래된 것부터 삭제).
+파일명은 서버가 만든다(`<UTC 타임스탬프>-<정리된 라벨>`). 인증이 없으므로 업로드·삭제도
+신뢰된 네트워크 안에서만 열어둘 것.
+
+---
+
 ## 웹 UI
 
 | 경로 | 상태 |
 |---|---|
 | `/console` | 사용 가능 — 키 관리, init/unseal |
 | `/` | `/console`로 리다이렉트 |
-| `/dashboard` | 비활성 — seal 비교 엔드포인트가 Transit 평면에 있어 관리 API로 접근 불가 |
+| `/dashboard` | 사용 가능 — 운영·성능 대시보드(상태, 실시간 트래픽, 벤치 결과 비교). 아래 "운영·성능 대시보드" 참고 |
 | `/portal` | 비활성 — Transit API를 호출하는 별도 데모 앱으로 분리 예정 |
 
 console의 "Seal 특성" 카드는 Transit API가 필요하다는 안내를 표시한다.

@@ -173,6 +173,21 @@ SAR은 가상 리소스에 대한 질의도 허용하므로 이 방식이 성립
 
 ---
 
+### 대시보드 데이터 흐름 (관리 API)
+
+관리 API(`cmd/admin-api`)의 `/dashboard`는 KMS 서버 코드를 건드리지 않고 이미 노출된
+평면만 읽는다. `internal/dashboard`의 수집기가 `ADMIN_API_METRICS_INTERVAL`(기본 5초)마다
+KMS의 Metrics 평면(`:9100/metrics`)을 HTTP로 긁어 `prometheus/common/expfmt`로 파싱하고, 최근
+`ADMIN_API_METRICS_WINDOW`(기본 15분)분을 메모리 링 버퍼에 보관한다(Prometheus 불필요).
+`/api/dashboard/traffic`은 인접한 두 샘플의 카운터 차이로 초당 값을, 히스토그램 버킷 증가분으로
+p50/p99를 계산해 브라우저에 주고, 브라우저가 5초마다 이를 다시 그린다. 수집이 꺼졌거나 실패하면
+`/api/dashboard/status`는 Admin 평면(admin.sock의 `seal-status`, `keys` 개수)으로 sealed와 키 수만
+대신 채우고 값마다 출처를 표시한다. 벤치 결과는 `cmd/bench --submit`이 `POST /api/bench/results`로
+보내면 관리 API가 검증 후 `ADMIN_API_BENCH_DIR`에 실행당 파일 하나로 저장하고, 화면이 이를 읽어 조건별로
+비교한다. 관리 API에는 인증이 없으므로 이 업로드·삭제 경로도 신뢰된 네트워크 안에서만 열어야 한다.
+
+---
+
 ## 확장 지점
 
 인터페이스로 분리되어 구현체 교체가 가능한 부분.

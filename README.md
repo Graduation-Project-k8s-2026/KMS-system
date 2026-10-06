@@ -87,8 +87,9 @@ internal/storage/      저장 백엔드 (StorageBackend 인터페이스 + 구현
 internal/api/httputil/ 두 평면이 공유하는 JSON 응답 헬퍼, 에러 매핑, sealed 가드 미들웨어
 internal/api/transit/  데이터 평면 — 암호화/복호화/rewrap, seal 비교·벤치마크 (TCP로 노출)
 internal/api/admin/    관리 평면 — 키 관리, init/unseal/seal-status (유닉스 소켓 전용)
-internal/api/console/, portal/, dashboard/, home/  웹 UI (현재 비활성 — 아래 "웹 UI" 절 참고)
+internal/api/console/, portal/, dashboard/, home/  웹 UI 코드 (console만 관리 API가 서빙, 나머지 옛 패키지는 비활성 — 아래 "웹 UI" 절 참고)
 internal/adminapi/     관리 API 프로세스의 라우팅/프록시 로직 (admin.sock 투명 중계, /healthz, /readyz)
+internal/dashboard/    관리 API의 운영·성능 대시보드 — KMS /metrics 수집, bench 결과 저장·조회, /dashboard 화면(go:embed)
 internal/authn/        Transit 요청자 인증 (ServiceAccount 토큰 로컬 서명 검증)
 internal/authz/        Transit 요청자 인가 (SubjectAccessReview 기반)
 internal/metrics/      Prometheus 지표 정의 + 계측 미들웨어/collector (전용 /metrics 리스너)
@@ -145,7 +146,7 @@ KMS_SEAL_TYPE=dev KMS_MASTER_KEY=change-me KMS_STORAGE=memory go run ./cmd/serve
 
 기타: `KMS_STORAGE`(`memory`\|`file`, 기본 `file`), `KMS_DATA_DIR`(기본 `./data`)
 
-### 2. 웹 UI — console은 관리 API에서 복구됨, dashboard/portal은 아직 비활성
+### 2. 웹 UI — console과 새 대시보드는 관리 API에서 제공, 옛 dashboard/portal은 비활성
 
 `console`/`portal`/`dashboard`/`home` 패키지(코드)는 저장소에 그대로 남아
 있지만, KMS 서버(`cmd/server`)의 Transit/Admin 리스너에는 어느 것도
@@ -154,8 +155,9 @@ KMS_SEAL_TYPE=dev KMS_MASTER_KEY=change-me KMS_STORAGE=memory go run ./cmd/serve
 
 대신 아래 "4. 관리 API" 절에서 다루는 별도 프로세스(`cmd/admin-api`)가
 HTTP로 `/console`을 서빙하고 그 안의 API 호출을 admin.sock으로 중계합니다
-— 운영자 콘솔은 이 경로로 다시 쓸 수 있습니다. `/dashboard`, `/portal`은
-여전히 어디에도 등록되어 있지 않습니다 — 이유는 "4. 관리 API" 절 참고.
+— 운영자 콘솔은 이 경로로 다시 쓸 수 있습니다. 같은 프로세스가 새 운영·성능
+대시보드(`/dashboard`)도 서빙합니다 — "4. 관리 API"의 "운영·성능 대시보드"
+절 참고. `/portal`은 어디에도 등록되어 있지 않습니다.
 
 ### 3. API 직접 호출 (curl)
 
@@ -233,6 +235,10 @@ go run ./cmd/admin-api
 |---|---|---|
 | `ADMIN_API_ADDR` | `:8201` | 관리 API가 HTTP를 수신할 주소 |
 | `KMS_ADMIN_SOCKET` | `/var/run/kms/admin.sock` | 중계할 admin.sock 경로. 시작 시 이 경로에 파일이 없으면(= KMS 서버가 아직 안 떴을 가능성) 명확한 에러와 함께 기동을 실패시킨다 |
+| `ADMIN_API_METRICS_URL` | `http://127.0.0.1:9100/metrics` | 대시보드가 수집할 KMS 메트릭 주소. **설정했지만 빈 값이면 수집을 끈다.** 클러스터 배포 시 반드시 KMS 메트릭 주소로 설정할 것 (기본값 127.0.0.1은 관리 API 파드 자신을 가리킴) |
+| `ADMIN_API_METRICS_INTERVAL` | `5` | 메트릭 수집 주기(초, 1 이상 정수) |
+| `ADMIN_API_METRICS_WINDOW` | `15` | 메모리에 보관할 메트릭 길이(분, 1 이상 정수) |
+| `ADMIN_API_BENCH_DIR` | `./admin-data/bench` | 벤치 결과 저장 디렉터리(실행 하나당 파일 하나). 기본값이 `KMS_DATA_DIR`(`./data`)과 다른 이유: 같은 폴더에서 두 프로세스를 띄워도 벤치 결과가 KMS 키 저장소에 섞이지 않게 하려는 것 |
 
 상태 확인 엔드포인트:
 
@@ -276,18 +282,62 @@ admin.sock만 중계하므로 이 카드는 "이 기능은 Transit API(:8200)가
 필요합니다" 안내만 보여주고 실제로 값을 불러오지는 않습니다 — 콘솔의
 나머지 기능에는 영향이 없습니다.
 
-`/dashboard`, `/portal`은 관리 API에 등록되어 있지 않습니다(404):
+옛 `/dashboard`(seal 4종 비교)와 `/portal`은 관리 API에 등록되어 있지 않습니다 — `/dashboard`는 위 새 대시보드로 대체됐습니다:
 
-- **`/dashboard`**: seal 4종 비교 화면인데, 쓰는 API(`seal-profile`,
+- **옛 seal 비교 화면**(`internal/api/dashboard`): seal 4종 비교 화면인데, 쓰는 API(`seal-profile`,
   `seal-benchmark`)가 전부 Transit 평면이라 admin.sock 경유로는 접근할 수
   없습니다. 벤치마크 실행기(Job)가 직접 측정하고 관리 API가 그 결과를
-  저장·표시하는 구조로 다시 설계한 뒤 연결할 예정입니다.
+  저장·표시하는 구조로 다시 설계한 것이 위의 새 대시보드입니다.
 - **`/portal`**: 고객용 암복호화 화면으로, 목표 구조에서는 Transit
   API(`:8200`)를 직접 호출하는 별도 데모 애플리케이션이 됩니다. 관리
   API(admin.sock 전용)에는 연결하지 않습니다.
 
 두 패키지(`internal/api/dashboard`, `internal/api/portal`) 모두 코드는
 삭제하지 않고 그대로 남겨뒀습니다.
+
+#### 운영·성능 대시보드 (`/dashboard`)
+
+`http://localhost:8201/dashboard`. 목적은 두 가지다 — 운영자가 KMS의 현재
+상태·트래픽을 한눈에 보는 것, 그리고 `cmd/bench` 결과를 모아 조건별로 비교하는 것.
+
+- **상태 카드**: sealed 여부, 키 수, 키 버전 합계, 마지막 unseal 시각, 메트릭 수집 상태.
+  각 값에는 출처(`metrics` / `socket`)가 붙는다.
+- **실시간 트래픽**(5초마다 갱신): 작업별(encrypt/decrypt/rewrap) 처리량·에러율·p50/p99 지연,
+  인가 캐시 적중률, 초당 SAR 호출 수, SAR 평균 vs apiserver 왕복 평균(차이 = 클라이언트 대기).
+  인가가 꺼져 있거나 메트릭이 없는 항목은 "데이터 없음"으로 표시한다. 모든 차트에 "표 보기"가 있다.
+- **벤치 결과**: 제출된 실행 목록(시각·라벨·시나리오·조건 수)에서 여러 개를 골라
+  같은 동시성 기준으로 처리량·p50·p99를 막대와 표로 비교한다.
+
+데이터 출처:
+
+- **메트릭**: 관리 API가 KMS의 `/metrics`를 직접 주기적으로 수집해 메모리 링 버퍼에 보관한다
+  (Prometheus 불필요). 초당 값은 두 시점의 카운터 차이로, 백분위는 히스토그램 버킷 차이로 계산한다.
+  수집에 실패하면 화면에 "메트릭 수집 불가"를 표시하고 계속 재시도하며(프로세스는 죽지 않음),
+  그동안 sealed와 키 수는 admin.sock(`/v1/sys/seal-status`, `/v1/keys`)에서 대신 가져온다.
+  키 버전 합계와 마지막 unseal은 메트릭에만 있어 이때는 `null`이다.
+- **벤치 결과**: `kms-bench --submit http://localhost:8201 ...`로 측정 직후 제출하거나
+  `scripts/bench-access-control.sh`를 `SUBMIT=http://localhost:8201`로 실행하면 조건별로 자동 제출된다.
+  제출이 실패해도 측정 결과 출력과 `--output` 파일은 그대로이고 경고만 출력된다.
+
+> **클러스터 배포 시 `ADMIN_API_METRICS_URL`을 KMS 메트릭 주소로 설정할 것**
+> (기본값 `127.0.0.1`은 관리 API 파드 자신을 가리킴). 설정하지 않으면 대시보드는
+> "메트릭 수집 불가"로 표시되고 트래픽 차트가 비어 있게 된다.
+
+JSON API:
+
+| 경로 | 설명 |
+|---|---|
+| `GET /api/dashboard/status` | sealed, 키 수, 버전 합계, 마지막 unseal, 값별 출처(`sources`), 수집 상태(`metrics`) |
+| `GET /api/dashboard/traffic?window=5m` | 시계열. `window`는 30초 ~ 보관 길이(`ADMIN_API_METRICS_WINDOW`). 계산할 수 없는 지점·항목은 `null` |
+| `POST /api/bench/results` | bench JSON 그대로 제출. 201 `{"id","runs"}` / 400 형식 오류 / 413 크기 초과(1MB) |
+| `GET /api/bench/results` | 목록(시각 내림차순) |
+| `GET /api/bench/results/{id}` | 저장된 원문 JSON |
+| `DELETE /api/bench/results/{id}` | 삭제(204) |
+
+보안 참고: 업로드는 크기 제한(1MB)·JSON 스키마 검증·서버가 만든 파일명(타임스탬프+정리된 라벨,
+클라이언트 입력은 경로에 쓰지 않음)·저장 개수 상한(500개, 넘으면 오래된 것부터 삭제)을 적용한다.
+**그래도 관리 API에는 인증이 없으므로 벤치 결과 업로드·삭제 API도 인증 없이 열려 있다** —
+기동 로그에도 같은 경고가 나온다. 대시보드 응답에는 키 이름·토큰·주체를 넣지 않는다.
 
 ### 5. Transit API 인증 (ServiceAccount 토큰, 1단계: 인증만)
 

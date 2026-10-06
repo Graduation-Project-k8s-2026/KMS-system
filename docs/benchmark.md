@@ -71,6 +71,7 @@ rewrap     1KB      1     6149.6    0.14ms  0.17ms  0.25ms  0.44ms  0.44ms  0
 | `--label` | (없음) | 결과에 붙일 조건 라벨 (예: `authz-cached`) — 접근 제어 비교 실험에 필수 |
 | `--format` | `table` | `table`\|`json` |
 | `--output` | (stdout) | 결과를 쓸 파일 경로 |
+| `--submit` | (없음) | 관리 API 주소(예: `http://localhost:8201`). 측정 후 JSON을 `POST /api/bench/results`로 제출해 대시보드에서 비교한다. 실패해도 출력·`--output` 저장은 그대로이고 경고만 출력 |
 | `--keepalive` | `true` | HTTP 커넥션 재사용 여부. `false`로 끄면 매 요청 새 커넥션 비용을 포함해 측정(비교용) |
 | `--timeout` | `30s` | 요청 하나의 HTTP 타임아웃 (안전장치) |
 

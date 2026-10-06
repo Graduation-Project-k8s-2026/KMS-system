@@ -91,4 +91,18 @@ var (
 		Name:      "cache_entries",
 		Help:      "현재 인가 판단 캐시에 들어있는 항목 수.",
 	})
+
+	// AuthzAPIServerRoundtripDuration: SubjectAccessReview 호출의 순수 HTTP
+	// 왕복 시간(초) — client-go의 클라이언트 측 rate limiter 대기는 제외한다.
+	// AuthzSARDuration(대기+왕복 합산)에서 이 지표를 빼면(두 히스토그램의
+	// _sum을 Prometheus에서 비교) rate limiter 대기 시간만 분리해서 볼 수
+	// 있다 — ADR-008(docs/decisions.md)에서 다룬 "토큰 고갈로 매 요청이
+	// 200ms씩 걸리는" 문제를 메트릭만 보고 바로 알아챌 수 있게 하기 위함.
+	AuthzAPIServerRoundtripDuration = promauto.NewHistogram(prometheus.HistogramOpts{
+		Namespace: "kms",
+		Subsystem: "authz",
+		Name:      "apiserver_roundtrip_seconds",
+		Help:      "SubjectAccessReview 호출의 순수 HTTP 왕복 시간(초, rate limiter 대기 제외).",
+		Buckets:   prometheus.DefBuckets,
+	})
 )

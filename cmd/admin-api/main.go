@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/adminapi"
+	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/dashboard"
 )
 
 // shutdownTimeout: SIGINT/SIGTERM 수신 후 진행 중인 요청(admin.sock으로
@@ -33,8 +34,28 @@ func main() {
 	}
 
 	log.Print("admin API is running without authentication or TLS — do not expose outside a trusted network")
+	log.Print("the bench result upload/delete APIs (/api/bench/results) are also unauthenticated")
 
-	router := adminapi.NewRouter(adminapi.Deps{SocketPath: socketPath})
+	dashCfg, err := dashboard.ConfigFromEnv(os.LookupEnv, socketPath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	dash, err := dashboard.NewService(dashCfg)
+	if err != nil {
+		log.Fatalf("dashboard: %v", err)
+	}
+	if dashCfg.MetricsURL == "" {
+		log.Printf("dashboard: metrics collection disabled (%s is empty)", dashboard.EnvMetricsURL)
+	} else {
+		log.Printf("dashboard: scraping %s every %s, keeping %s", dashCfg.MetricsURL, dashCfg.MetricsInterval, dashCfg.MetricsWindow)
+	}
+	log.Printf("dashboard: bench results dir=%s", dashCfg.BenchDir)
+
+	collectCtx, stopCollect := context.WithCancel(context.Background())
+	defer stopCollect()
+	go dash.Run(collectCtx)
+
+	router := adminapi.NewRouter(adminapi.Deps{SocketPath: socketPath, Dashboard: dash})
 	srv := &http.Server{Addr: addr, Handler: router}
 
 	log.Printf("admin-api starting: addr=%s admin_socket=%s", addr, socketPath)

@@ -7,8 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/adminapi"
+	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/dashboard"
 )
 
 // TestRouter_Console_ServesHTML은 /console이 200과 실제 console.html
@@ -115,5 +117,42 @@ func TestRouter_ProxyStillWorksAlongsideConsole(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	if string(body) != `{"sealed":true,"seal_type":"dev"}` {
 		t.Fatalf("body = %q, want proxied backend body", string(body))
+	}
+}
+
+// TestRouter_Dashboard_MountedOnlyWhenConfigured는 Deps.Dashboard가 있을 때만
+// /dashboard와 /api/*가 등록되는지, 그리고 /v1 프록시와 공존하는지 확인한다.
+func TestRouter_Dashboard_MountedOnlyWhenConfigured(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "unused.sock")
+
+	plain := httptest.NewServer(adminapi.NewRouter(adminapi.Deps{SocketPath: sock}))
+	t.Cleanup(plain.Close)
+	resp, err := http.Get(plain.URL + "/api/bench/results")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("without Dashboard: status = %d, want 404", resp.StatusCode)
+	}
+
+	svc, err := dashboard.NewService(dashboard.Config{
+		MetricsURL: "", MetricsInterval: time.Second, MetricsWindow: time.Minute,
+		BenchDir: filepath.Join(t.TempDir(), "bench"), SocketPath: sock,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	with := httptest.NewServer(adminapi.NewRouter(adminapi.Deps{SocketPath: sock, Dashboard: svc}))
+	t.Cleanup(with.Close)
+	for _, path := range []string{"/dashboard", "/api/dashboard/status", "/api/dashboard/traffic", "/api/bench/results", "/console"} {
+		resp, err := http.Get(with.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("GET %s = %d, want 200", path, resp.StatusCode)
+		}
 	}
 }

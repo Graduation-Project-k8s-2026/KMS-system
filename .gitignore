@@ -34,3 +34,7 @@ CLAUDE.md
 
 # 빌드 산출물 (go build ./cmd/server 결과)
 /server
+*.tar
+
+# 관리 API 대시보드가 저장하는 벤치 결과(ADMIN_API_BENCH_DIR 기본값의 상위)
+/admin-data/

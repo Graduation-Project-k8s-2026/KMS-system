@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KMS 운영·성능 대시보드</title>
+<link rel="stylesheet" href="/dashboard/static/dashboard.css">
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <a class="home-link" href="/">← 홈으로</a>
+    <h1>KMS 운영·성능 대시보드</h1>
+    <p class="sub">KMS의 현재 상태와 트래픽, 그리고 벤치마크 결과 비교 · <a href="/console">운영 콘솔</a></p>
+  </header>
+
+  <section id="status-section" aria-labelledby="h-status">
+    <h2 id="h-status">1. 상태</h2>
+    <div id="cards" class="cards"></div>
+    <div id="collect-note" class="note" hidden></div>
+  </section>
+
+  <section aria-labelledby="h-traffic">
+    <h2 id="h-traffic">2. 실시간 트래픽
+      <span class="h-tools">
+        <label>구간
+          <select id="window">
+            <option value="1m">1분</option>
+            <option value="5m" selected>5분</option>
+            <option value="15m">15분</option>
+          </select>
+        </label>
+        <span id="updated" class="dim"></span>
+      </span>
+    </h2>
+    <div id="traffic-msg" class="note" hidden></div>
+    <div id="charts" class="charts"></div>
+  </section>
+
+  <section aria-labelledby="h-bench">
+    <h2 id="h-bench">3. 벤치마크 결과</h2>
+    <p class="dim small">결과는 <code>kms-bench --submit http://&lt;관리 API&gt;</code> 또는 <code>POST /api/bench/results</code>로 올립니다. 비교할 실행을 체크하세요(최대 8개).</p>
+    <div id="bench-msg" class="note" hidden></div>
+    <div class="card table-wrap"><table id="bench-list" class="data"></table></div>
+    <div id="compare" class="card" hidden>
+      <div class="compare-tools">
+        <label>조건 <select id="group"></select></label>
+        <label>지표
+          <select id="metric">
+            <option value="ops">처리량 (ops/sec)</option>
+            <option value="p50">p50 지연 (ms)</option>
+            <option value="p99">p99 지연 (ms)</option>
+          </select>
+        </label>
+        <span class="dim small">같은 동시성끼리 비교합니다.</span>
+      </div>
+      <div id="compare-chart"></div>
+    </div>
+  </section>
+</div>
+<script src="/dashboard/static/dashboard.js"></script>
+</body>
+</html>

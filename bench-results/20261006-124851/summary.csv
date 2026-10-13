@@ -1,0 +1,16 @@
+condition,concurrency,ops_per_sec,vs_baseline_pct,p50_ms,p99_ms,errors
+baseline,1,6959.30,100.00,0.125,0.332,0
+baseline,10,22945.51,100.00,0.330,1.176,0
+baseline,50,26709.05,100.00,1.627,5.575,0
+authn-only,1,5051.58,72.59,0.175,0.476,0
+authn-only,10,16589.15,72.30,0.529,1.412,0
+authn-only,50,19814.72,74.19,2.170,7.260,0
+authz-cached,1,5045.16,72.50,0.175,0.487,0
+authz-cached,10,16758.38,73.04,0.513,1.407,0
+authz-cached,50,19867.95,74.39,2.158,7.187,0
+authz-uncached-qps50,1,58.01,0.83,20.091,21.187,0
+authz-uncached-qps50,10,50.00,0.22,199.955,201.154,0
+authz-uncached-qps50,50,50.00,0.19,999.861,1001.212,0
+authz-uncached-nolimit,1,1170.38,16.82,0.807,1.261,0
+authz-uncached-nolimit,10,5407.66,23.57,1.732,3.519,0
+authz-uncached-nolimit,50,8289.85,31.04,5.524,16.264,0

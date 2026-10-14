@@ -1,0 +1,82 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kms-prometheus-config
+  namespace: kms-system
+data:
+  prometheus.yml: "global:\n  scrape_interval: 15s\n  evaluation_interval: 15s\nscrape_configs:\n\
+    \  - job_name: kms\n    static_configs:\n      - targets: ['127.0.0.1:9100']\n\
+    \  - job_name: kube-apiserver\n    scheme: https\n    authorization:\n      type:\
+    \ Bearer\n      credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token\n\
+    \    tls_config:\n      ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt\n\
+    \    static_configs:\n      - targets: ['${NODE_IP}:6443']\n"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kms-prometheus
+  namespace: kms-system
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: kms-prometheus
+  template:
+    metadata:
+      labels:
+        app: kms-prometheus
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: ${NODE_NAME}
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      serviceAccountName: kms-prometheus
+      automountServiceAccountToken: true
+      securityContext:
+        runAsUser: 65534
+        runAsGroup: 65534
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: prometheus
+        image: ${PROMETHEUS_IMAGE}
+        imagePullPolicy: Never
+        args:
+        - --config.file=/etc/prometheus/prometheus.yml
+        - --storage.tsdb.path=/prometheus
+        - --storage.tsdb.retention.time=7d
+        - --storage.tsdb.retention.size=5GB
+        - --web.listen-address=127.0.0.1:9090
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            memory: 1Gi
+        readinessProbe:
+          httpGet:
+            host: 127.0.0.1
+            path: /-/ready
+            port: 9090
+        volumeMounts:
+        - name: config
+          mountPath: /etc/prometheus
+          readOnly: true
+        - name: data
+          mountPath: /prometheus
+      volumes:
+      - name: config
+        configMap:
+          name: kms-prometheus-config
+      - name: data
+        persistentVolumeClaim:
+          claimName: kms-prometheus-data

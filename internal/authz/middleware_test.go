@@ -1,6 +1,7 @@
 package authz_test
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -95,4 +96,17 @@ func withTestIdentity(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		next.ServeHTTP(w, r.WithContext(authn.WithIdentity(r.Context(), testIdentity)))
 	})
+}
+
+func TestMiddleware_BackendFailureReturns503WithoutExecuting(t *testing.T) {
+	reactor, _ := newCountingReactor(false, errors.New("API unavailable"))
+	a := newFakeAuthorizer(t, reactor, authz.Config{})
+	called := false
+	router := chi.NewRouter()
+	router.With(withTestIdentity, authz.Middleware(a, "encrypt")).Post("/v1/encrypt/{name}", func(w http.ResponseWriter, r *http.Request) { called = true; w.WriteHeader(200) })
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest("POST", "/v1/encrypt/demo", nil))
+	if w.Code != 503 || called {
+		t.Fatal("SAR outage hidden as denial or handler executed")
+	}
 }

@@ -23,24 +23,27 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
-	"io"
+	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/audit"
+	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/kmsv2"
+	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/security"
+	"google.golang.org/grpc"
+	pb "k8s.io/kms/apis/v2"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
-
-	"github.com/google/go-tpm-tools/simulator"
-	tpm2 "github.com/google/go-tpm/legacy/tpm2"
 
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/api/admin"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/api/transit"
@@ -64,6 +67,22 @@ const shutdownTimeout = 10 * time.Second
 const adminSocketPerm = 0o600
 
 func main() {
+	cert, key := os.Getenv("KMS_TRANSIT_TLS_CERT"), os.Getenv("KMS_TRANSIT_TLS_KEY")
+	pair, err := tls.LoadX509KeyPair(cert, key)
+	if err != nil {
+		log.Fatal("Transit TLS certificate/key required")
+	}
+	if getenvDefault("KMS_AUTHN", "on") != "on" || getenvDefault("KMS_AUTHZ", "on") != "on" || os.Getenv("KMS_AUTHZ_FAIL_OPEN") == "true" {
+		log.Fatal("production requires JWT and fail-closed SAR")
+	}
+	if os.Getenv("KMS_SA_ISSUER") == "" || os.Getenv("KMS_SA_AUDIENCE") == "" || os.Getenv("KMS_KUBECONFIG") == "" {
+		log.Fatal("issuer, audience and SAR kubeconfig required")
+	}
+	auditLog, err := audit.New(os.Getenv("KMS_AUDIT_DIR"))
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	storageKind := getenvDefault("KMS_STORAGE", "file")
 	dataDir := getenvDefault("KMS_DATA_DIR", "./data")
 	autoUnseal := os.Getenv("KMS_AUTO_UNSEAL") == "true"
@@ -99,7 +118,10 @@ func main() {
 		}
 	}
 
-	sealType := getenvDefault("KMS_SEAL_TYPE", "dev")
+	sealType := getenvDefault("KMS_SEAL_TYPE", "shamir")
+	if sealType != "shamir" {
+		log.Fatal("production server requires host-independent Shamir seal; use isolated lab fixtures for other seals")
+	}
 
 	// shamirParts/shamirThreshold는 seal_type이 "shamir"일 때만 쓰이지만,
 	// admin.Deps에 그대로 전달해 POST /v1/sys/init(InitShamir 호출)과
@@ -110,83 +132,47 @@ func main() {
 		shamirThreshold int
 	)
 
-	switch sealType {
-	case "dev":
-		masterKey := os.Getenv("KMS_MASTER_KEY")
-		if masterKey == "" {
-			log.Fatal("KMS_SEAL_TYPE=dev requires KMS_MASTER_KEY; DevSeal needs a passphrase to derive the Root Key")
-		}
-		sealer = seal.NewDevSeal(masterKey)
-
-	case "shamir":
-		shamirParts = getenvIntDefault("KMS_SHAMIR_PARTS", 5)
-		shamirThreshold = getenvIntDefault("KMS_SHAMIR_THRESHOLD", 3)
-		sealer = seal.NewShamirSeal(shamirThreshold)
-
-	case "tpm":
-		var tpm io.ReadWriteCloser
-		if os.Getenv("KMS_TPM_SIMULATOR") == "true" {
-			sim, err := simulator.Get()
-			if err != nil {
-				log.Fatalf("KMS_TPM_SIMULATOR=true but starting the TPM simulator failed: %v", err)
-			}
-			tpm = sim
-		} else {
-			devicePath := getenvDefault("KMS_TPM_DEVICE", "/dev/tpmrm0")
-			dev, err := tpm2.OpenTPM(devicePath)
-			if err != nil {
-				log.Fatalf("failed to open TPM device %q: %v", devicePath, err)
-			}
-			tpm = dev
-		}
-		// TPMSeal은 barrier가 쓰는 storage와 별개의 storage에 sealed blob을
-		// 저장한다(순환 의존 방지 — 이유는 internal/seal/tpm.go 참고).
-		tpmStore := newStorage("seal-tpm")
-		sealer = seal.NewTPMSeal(tpm, tpmStore)
-
-	case "k8s":
-		client, err := seal.NewK8sClientFromEnv()
-		if err != nil {
-			log.Fatalf("KMS_SEAL_TYPE=k8s but building a K8s client failed: %v", err)
-		}
-		namespace := getenvDefault("KMS_K8S_NAMESPACE", "default")
-		secretName := getenvDefault("KMS_K8S_SECRET_NAME", "kms-root-key")
-		sealer = seal.NewK8sSeal(client, namespace, secretName)
-
-	default:
-		log.Fatalf("unknown KMS_SEAL_TYPE %q; want one of \"dev\", \"shamir\", \"tpm\", \"k8s\"", sealType)
+	shamirParts = getenvIntDefault("KMS_SHAMIR_PARTS", 5)
+	shamirThreshold = getenvIntDefault("KMS_SHAMIR_THRESHOLD", 3)
+	if shamirParts < 2 || shamirParts > 255 || shamirThreshold < 2 || shamirThreshold > shamirParts {
+		log.Fatal("invalid Shamir parameters")
 	}
+	sealer = seal.NewShamirSeal(shamirThreshold)
 
 	store := newStorage("")
+	if storageKind != "file" {
+		log.Fatal("production requires file storage")
+	}
+	locked, err := storage.OpenFileStorage(dataDir)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer locked.Close()
+	store = locked
 
 	// 조립 순서: seal -> storage -> barrier -> keys -> transit -> rotation.
 	// 각 층은 자신보다 아래 층을 인터페이스로만 알고 있으므로, 실제 구현체가
 	// 무엇인지 결정해서 서로 연결하는 건 이 main의 책임이다.
 	b := barrier.NewBarrier(store, sealer)
+	if err := b.CheckInitialization(shamirParts, shamirThreshold); err != nil {
+		log.Fatal(err)
+	}
 	km := keys.NewKeyManager(b)
+	v2Name := getenvDefault("KMS_V2_KEY_NAME", "k8s-secrets")
+	if !regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`).MatchString(v2Name) {
+		log.Fatal("invalid reserved KMS v2 key name")
+	}
+	v2Service := kmsv2.New(km, v2Name)
 	ts := transitsvc.NewTransitService(km)
 	scheduler := rotation.NewRotationScheduler(km, rotation.WithOnRotate(func(name string) {
 		log.Printf("rotation: rotated key %q", name)
 	}))
 
-	// 스케줄러는 barrier가 unseal된 상태에서만 실제로 회전을 수행할 수 있다
-	// (RotateKey는 sealed 상태면 barrier.ErrSealed를 반환한다). 지금은 단순화를
-	// 위해 "부팅 시 자동 unseal된 경우에만" 스케줄러를 함께 시작한다.
-	// POST /v1/sys/unseal로 수동 unseal했을 때도 스케줄러를 시작하려면
-	// 그 핸들러 쪽에 스케줄러를 전달하는 확장이 필요한데, 지금 범위에서는
-	// 그 경계를 의도적으로 남겨둔다.
-	//
-	// shamir는 애초에 자동 unseal이 불가능하다(threshold명이 각자 조각을
-	// 제출해야 하므로) — KMS_AUTO_UNSEAL=true와 조합돼도 barrier.Unseal()이
-	// 항상 ErrNotEnoughShares로 실패할 뿐이니, 부팅 자체를 막는 대신 그냥
-	// 자동 unseal 시도를 건너뛰고 경고만 남긴다.
-	if autoUnseal && sealType == "shamir" {
-		log.Print("KMS_AUTO_UNSEAL=true is ignored for KMS_SEAL_TYPE=shamir (shares must be submitted by operators via POST /v1/sys/unseal)")
-	} else if autoUnseal {
-		if err := b.Unseal(); err != nil {
-			log.Fatalf("KMS_AUTO_UNSEAL=true but Unseal failed: %v", err)
-		}
-		scheduler.Start()
+	defer scheduler.Stop()
+
+	// Production always requires manual Shamir unseal. Scheduler starts in the callback.
+	if autoUnseal {
+		log.Fatal("KMS_AUTO_UNSEAL must be false for the production Shamir server")
 	}
 
 	verifier, err := buildAuthnVerifier()
@@ -200,16 +186,30 @@ func main() {
 	}
 
 	transitRouter := transit.NewRouter(transit.Deps{
-		Barrier:    b,
-		Transit:    ts,
-		Seal:       sealer,
-		Verifier:   verifier,
-		Authorizer: authorizer,
+		ReservedKey: v2Name,
+		Barrier:     b,
+		Transit:     ts,
+		Seal:        sealer,
+		Verifier:    verifier,
+		Authorizer:  authorizer,
 	})
 	adminRouter := admin.NewRouter(admin.Deps{
-		Barrier:         b,
-		Keys:            km,
-		Seal:            sealer,
+		Barrier: b,
+		Keys:    km,
+		Seal:    sealer,
+		OnUnseal: func() error {
+			_, err := km.GetKeyMeta(v2Name)
+			if errors.Is(err, &keys.KeyNotFoundError{}) {
+				_, err = km.CreateKey(v2Name, 0)
+			}
+			if err != nil {
+				return err
+			}
+			scheduler.Start()
+			return nil
+		},
+		OnSeal:          scheduler.Stop,
+		ReservedKey:     v2Name,
 		ShamirParts:     shamirParts,
 		ShamirThreshold: shamirThreshold,
 	})
@@ -236,10 +236,29 @@ func main() {
 		log.Fatalf("failed to listen on admin socket %q: %v", adminSocketPath, err)
 	}
 	defer os.Remove(adminSocketPath)
+	v2Path := getenvDefault("KMS_V2_SOCKET", "/run/custom-kms/kmsv2/kms-v2.sock")
+	v2Listener, err := listenUnixSocket(v2Path)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer os.Remove(v2Path)
+	grpcServer := grpc.NewServer(grpc.MaxRecvMsgSize(2 << 20))
+	pb.RegisterKeyManagementServiceServer(grpcServer, v2Service)
+	defer grpcServer.Stop()
+	v2Errs := make(chan error, 1)
+	go func() {
+		if err := grpcServer.Serve(v2Listener); err != nil {
+			v2Errs <- err
+		}
+	}()
+	transitListener = tls.NewListener(transitListener, &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{pair}})
+	adminRouter = auditLog.Middleware(audit.PeerSubject, adminRouter)
 
+	adminHTTP := security.Server("", adminRouter)
+	adminHTTP.ConnContext = audit.PeerContext
 	servers := []namedServer{
-		{"transit", &http.Server{Handler: transitRouter}, transitListener},
-		{"admin", &http.Server{Handler: adminRouter}, adminListener},
+		{"transit", security.Server("", metrics.AllHTTP(transitRouter)), transitListener},
+		{"admin", adminHTTP, adminListener},
 	}
 
 	metricsStatus := "disabled (KMS_METRICS_ADDR=\"\")"
@@ -275,6 +294,8 @@ func main() {
 	select {
 	case <-ctx.Done():
 		log.Print("shutdown signal received, shutting down all listeners")
+	case <-v2Errs:
+		log.Print("KMS v2 listener failed; shutting down")
 	case err := <-serverErrs:
 		log.Printf("listener failed: %v; shutting down all listeners", err)
 	}
@@ -286,6 +307,15 @@ func main() {
 			log.Printf("%s listener shutdown error: %v", s.name, err)
 		}
 	}
+	grpcDone := make(chan struct{})
+	go func() { grpcServer.GracefulStop(); close(grpcDone) }()
+	select {
+	case <-grpcDone:
+	case <-shutdownCtx.Done():
+		grpcServer.Stop()
+	}
+	scheduler.Stop()
+	b.Seal()
 	wg.Wait()
 }
 
@@ -300,7 +330,7 @@ func main() {
 func resolveMetricsAddr() (addr string, enabled bool) {
 	v, set := os.LookupEnv("KMS_METRICS_ADDR")
 	if !set {
-		return ":9100", true
+		return "127.0.0.1:9100", true
 	}
 	if v == "" {
 		return "", false
@@ -323,7 +353,7 @@ func registerMetricsCollectors(b *barrier.Barrier, km *keys.KeyManager) {
 }
 
 // buildAuthnVerifier는 KMS_AUTHN에 따라 Transit 라우터에 붙일 인증 검증기를
-// 만든다. KMS_AUTHN=off(기본값)면 nil을 반환한다 — Transit 라우터는 nil
+// 만든다. KMS_AUTHN=off(격리된 테스트 helper용)면 nil을 반환한다 — Transit 라우터는 nil
 // Verifier를 "인증 미들웨어를 등록하지 않음"으로 취급한다. 로컬 개발/테스트가
 // 지금 토큰 없는 curl로 이뤄지고 있으므로, 기본 동작을 깨지 않기 위한
 // 선택이다.
@@ -331,7 +361,7 @@ func registerMetricsCollectors(b *barrier.Barrier, km *keys.KeyManager) {
 // Admin(유닉스 소켓)에는 이 인증을 적용하지 않는다 — 소켓 파일 권한(0600)과
 // 같은 노드 제약으로 이미 보호되며, 관리 API 인증은 별도 과제다.
 func buildAuthnVerifier() (*authn.Verifier, error) {
-	mode := getenvDefault("KMS_AUTHN", "off")
+	mode := getenvDefault("KMS_AUTHN", "on")
 	switch mode {
 	case "off":
 		log.Print("authentication is disabled (KMS_AUTHN=off) — all Transit requests are accepted")
@@ -344,6 +374,7 @@ func buildAuthnVerifier() (*authn.Verifier, error) {
 			return nil, err
 		}
 		return authn.NewVerifier(keys, authn.Config{
+			Strict:   true,
 			Issuer:   os.Getenv("KMS_SA_ISSUER"),
 			Audience: os.Getenv("KMS_SA_AUDIENCE"),
 		}), nil
@@ -359,7 +390,7 @@ func buildAuthnVerifier() (*authn.Verifier, error) {
 var errAuthzRequiresAuthn = errors.New("KMS_AUTHZ=on requires KMS_AUTHN=on — authorization needs a verified identity to check permissions against")
 
 // buildAuthzAuthorizer는 KMS_AUTHZ에 따라 Transit 라우터에 붙일 인가기를
-// 만든다. KMS_AUTHZ=off(기본값)면 nil을 반환한다 — Transit 라우터는 nil
+// 만든다. KMS_AUTHZ=off(격리된 테스트 helper용)면 nil을 반환한다 — Transit 라우터는 nil
 // Authorizer를 "인가 미들웨어를 등록하지 않음"으로 취급하고, 인증만
 // 통과하면 모든 키에 접근할 수 있다(2단계 이전과 동일한 동작).
 //
@@ -367,7 +398,7 @@ var errAuthzRequiresAuthn = errors.New("KMS_AUTHZ=on requires KMS_AUTHN=on — a
 // 받는다 — 신원 없이는 권한을 판단할 수 없으므로, KMS_AUTHN=off인데
 // KMS_AUTHZ=on이면 설정 오류로 기동을 실패시킨다.
 func buildAuthzAuthorizer(authnEnabled bool) (*authz.Authorizer, error) {
-	mode := getenvDefault("KMS_AUTHZ", "off")
+	mode := getenvDefault("KMS_AUTHZ", "on")
 	switch mode {
 	case "off":
 		log.Print("authorization is disabled (KMS_AUTHZ=off) — any authenticated request is accepted")
@@ -431,10 +462,25 @@ func buildAuthzAuthorizer(authnEnabled bool) (*authz.Authorizer, error) {
 //     기동이 실패한다.
 //   - 바인딩 후 권한을 0600으로 좁혀 같은 노드의 소유자만 접근하게 한다.
 func listenUnixSocket(path string) (net.Listener, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+	if info, err := os.Lstat(path); err == nil {
+		if info.Mode()&os.ModeSocket == 0 {
+			return nil, fmt.Errorf("refusing to remove non-socket")
+		}
+		conn, dialErr := net.DialTimeout("unix", path, time.Second)
+		if dialErr == nil {
+			conn.Close()
+			return nil, fmt.Errorf("socket already active")
+		}
+		if !errors.Is(dialErr, syscall.ECONNREFUSED) {
+			return nil, fmt.Errorf("cannot establish stale socket ownership")
+		}
+		if err = os.Remove(path); err != nil {
+			return nil, err
+		}
+	} else if !os.IsNotExist(err) {
 		return nil, err
 	}
 	l, err := net.Listen("unix", path)

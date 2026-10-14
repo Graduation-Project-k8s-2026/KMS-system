@@ -20,19 +20,18 @@ func Middleware(v *Verifier) func(http.Handler) http.Handler {
 			header := r.Header.Get("Authorization")
 			token, ok := strings.CutPrefix(header, bearerPrefix)
 			if !ok || token == "" {
-				log.Printf("authn: rejected %s %s: missing or malformed Authorization header", r.Method, r.URL.Path)
+				log.Print("authn: rejected missing credential")
 				httputil.WriteJSONError(w, http.StatusUnauthorized, "unauthorized")
 				return
 			}
 
 			identity, err := v.Verify(token)
 			if err != nil {
-				log.Printf("authn: rejected %s %s: %v", r.Method, r.URL.Path, err)
+				log.Print("authn: rejected invalid credential")
 				httputil.WriteJSONError(w, http.StatusUnauthorized, "unauthorized")
 				return
 			}
 
-			log.Printf("authn: authenticated %s %s as %s", r.Method, r.URL.Path, identity.Subject)
 			next.ServeHTTP(w, r.WithContext(WithIdentity(r.Context(), identity)))
 		})
 	}

@@ -30,6 +30,7 @@ var allowedAlgs = []string{"RS256", "ES256"}
 // Config는 Verifier의 검증 정책을 담는다.
 type Config struct {
 	// Issuer: 기대하는 iss 클레임 값. 비어 있으면 검사하지 않는다.
+	Strict bool
 	Issuer string
 	// Audience: 기대하는 aud 클레임 값. 비어 있으면 검사하지 않는다.
 	Audience string
@@ -97,6 +98,9 @@ func (v *Verifier) Verify(tokenString string) (Identity, error) {
 		opts = append(opts, jwt.WithAudience(v.cfg.Audience))
 	}
 
+	if v.cfg.Strict {
+		opts = append(opts, jwt.WithExpirationRequired())
+	}
 	var lastErr error
 	for _, key := range candidates {
 		claims := &saClaims{}

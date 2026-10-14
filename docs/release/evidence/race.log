@@ -1,0 +1,31 @@
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/cmd/admin-api	1.123s
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/cmd/bench	(cached)
+?   	github.com/Graduation-Project-k8s-2026/KMS-system/cmd/demo-app	[no test files]
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/cmd/server	2.233s
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/adminapi	1.152s
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/api	(cached)
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/api/admin	(cached)
+?   	github.com/Graduation-Project-k8s-2026/KMS-system/internal/api/console	[no test files]
+?   	github.com/Graduation-Project-k8s-2026/KMS-system/internal/api/dashboard	[no test files]
+?   	github.com/Graduation-Project-k8s-2026/KMS-system/internal/api/home	[no test files]
+?   	github.com/Graduation-Project-k8s-2026/KMS-system/internal/api/httputil	[no test files]
+?   	github.com/Graduation-Project-k8s-2026/KMS-system/internal/api/portal	[no test files]
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/api/transit	(cached)
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/audit	(cached)
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/authn	(cached)
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/authz	(cached)
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/barrier	(cached)
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/bench	(cached)
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/crypto	(cached)
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/dashboard	(cached)
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/demo	(cached)
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/jobs	(cached)
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/keys	(cached)
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/kmsv2	(cached)
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/metrics	(cached)
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/rotation	(cached)
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/seal	(cached)
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/security	(cached)
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/shamir	(cached)
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/storage	(cached)
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/transit	(cached)

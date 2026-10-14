@@ -2,6 +2,7 @@ package authz
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -102,12 +103,18 @@ func NewAuthorizer(client authzv1client.SubjectAccessReviewInterface, cfg Config
 // 한다. 반면 apiserver가 실제로 응답한 허용/거부는(성공한 호출) 결과와
 // 무관하게 캐싱한다.
 func (a *Authorizer) Allowed(ctx context.Context, identity authn.Identity, resourceName, verb string) bool {
+	allowed, _ := a.Check(ctx, identity, resourceName, verb)
+	return allowed
+}
+
+// Check distinguishes a policy denial from an unavailable authorization backend.
+func (a *Authorizer) Check(ctx context.Context, identity authn.Identity, resourceName, verb string) (bool, error) {
 	key := cacheKey{subject: identity.Subject, namespace: identity.Namespace, name: resourceName, verb: verb}
 
 	if a.cache != nil {
 		if allowed, fresh := a.cache.get(key); fresh {
 			metrics.AuthzCacheRequestsTotal.WithLabelValues("hit").Inc()
-			return allowed
+			return allowed, nil
 		}
 	}
 	// 캐시가 비활성화됐을 때도(a.cache == nil) miss를 그대로 기록한다 —
@@ -135,12 +142,15 @@ func (a *Authorizer) Allowed(ctx context.Context, identity authn.Identity, resou
 	result, err := a.client.Create(reqCtx, sar, metav1.CreateOptions{})
 	metrics.AuthzSARDuration.Observe(time.Since(start).Seconds())
 
-	if err != nil {
+	if err != nil || result == nil || result.Status.EvaluationError != "" {
 		metrics.AuthzSARRequestsTotal.WithLabelValues("error").Inc()
 		slog.Error("authz: SubjectAccessReview call failed",
 			"subject", identity.Subject, "namespace", identity.Namespace,
-			"key", resourceName, "verb", verb, "error", err, "fail_open", a.cfg.FailOpen)
-		return a.cfg.FailOpen
+			"verb", verb, "fail_open", a.cfg.FailOpen)
+		if a.cfg.FailOpen {
+			return true, nil
+		}
+		return false, errors.New("authorization backend unavailable")
 	}
 
 	allowed := result.Status.Allowed
@@ -158,5 +168,5 @@ func (a *Authorizer) Allowed(ctx context.Context, identity authn.Identity, resou
 			"key", resourceName, "verb", verb, "reason", result.Status.Reason)
 	}
 
-	return allowed
+	return allowed, nil
 }

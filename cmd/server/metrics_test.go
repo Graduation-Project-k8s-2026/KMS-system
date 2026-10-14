@@ -9,8 +9,8 @@ func TestResolveMetricsAddr_Unset_DefaultsToNineOneHundred(t *testing.T) {
 	if !enabled {
 		t.Fatal("enabled = false, want true (KMS_METRICS_ADDR unset should default to enabled)")
 	}
-	if addr != ":9100" {
-		t.Fatalf("addr = %q, want %q", addr, ":9100")
+	if addr != "127.0.0.1:9100" {
+		t.Fatalf("addr = %q, want %q", addr, "127.0.0.1:9100")
 	}
 }
 

@@ -1,0 +1,20 @@
+{
+  "go": {
+    "tag": "1.26.9-bookworm",
+    "image": "docker.io/library/golang@sha256:d9c68c2c51161e12fd77e4c6320687c9cd86e1af1e3ad6e6cd63ff970641453c",
+    "arm64_manifest": "sha256:3d79ef488855a5ad990b346addf552d6671f20ca2710ad29da7232e0326785de",
+    "index_sha256": "d9c68c2c51161e12fd77e4c6320687c9cd86e1af1e3ad6e6cd63ff970641453c"
+  },
+  "runtime": {
+    "tag": "bookworm-slim",
+    "image": "docker.io/library/debian@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587",
+    "arm64_manifest": "sha256:a1b86db52ce3daef089e45aabe36dfec4091f82464c25c1fdcf03de197cbe82a",
+    "note": "dated tag bookworm-20260928-slim returned 404; resolved bookworm-slim once and locked immutable digest"
+  },
+  "prometheus": {
+    "tag": "v3.13.4",
+    "image": "docker.io/prom/prometheus@sha256:87861b8cf91579109319ebc300f3f1060e6da9c05d6ae8ad15a20c879e84e32e",
+    "arm64_manifest": "sha256:765261de302accc2aa2fa1c74aed31ce51c0acd92a0a55406903dbacc18ea39c",
+    "index_sha256": "87861b8cf91579109319ebc300f3f1060e6da9c05d6ae8ad15a20c879e84e32e"
+  }
+}

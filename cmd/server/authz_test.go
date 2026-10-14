@@ -9,6 +9,7 @@ import (
 // (기본값 off) 인가기 없이 nil을 반환하는지 확인한다 — Transit 라우터는
 // nil Authorizer를 "인가 미들웨어 없음"으로 취급한다.
 func TestBuildAuthzAuthorizer_Off_ReturnsNil(t *testing.T) {
+	t.Setenv("KMS_AUTHZ", "off")
 	a, err := buildAuthzAuthorizer(true)
 	if err != nil {
 		t.Fatalf("buildAuthzAuthorizer(true) with KMS_AUTHZ unset failed: %v", err)

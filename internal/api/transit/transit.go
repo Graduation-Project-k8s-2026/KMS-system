@@ -1,25 +1,12 @@
-// Package transit은 KMS의 데이터 평면 API — 등록된 키를 "사용"하는 연산
-// (암호화/복호화/rewrap)과, 그 사용을 비교·평가하는 데 쓰이는 읽기 전용
-// 진단 엔드포인트(seal-profile/seal-benchmark)를 담당한다. 이 라우터는
-// 네트워크(ClusterIP)로 열려 사용자 애플리케이션이 직접 호출한다 — 키
-// 생성/삭제, init/unseal 같은 관리 연산은 여기 없다(그건
-// internal/api/admin).
-//
-// seal-profile/seal-benchmark이 여기 있는 이유: 이 둘은 실제 barrier/seal/
-// storage 상태를 전혀 바꾸지 않는 순수 조회·측정 엔드포인트다(각각
-// internal/seal/profile.go, internal/seal/benchmark.go 참고 — benchmark는
-// 매번 완전히 격리된 임시 인스턴스만 만들었다 버린다). 벤치마크를 실행하는
-// 주체(예: 성능 측정용 Job)가 키 생성/삭제나 init/unseal 권한까지 가질
-// 필요가 없으므로, admin.sock이 아니라 권한이 최소화된 네트워크 쪽에 둔다.
+// Package transit implements the TLS data-plane handlers. Costly seal benchmarks are lab-only.
 package transit
 
 import (
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"time"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -32,15 +19,11 @@ import (
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/transit"
 )
 
-// sealBenchmarkTimeout: GET /v1/sys/seal-benchmark 한 요청이 허용하는 최대
-// 시간. TPM 시뮬레이터 기동 등으로 시간이 걸릴 수 있어, 요청이 무한정
-// 걸리지 않도록 상한을 둔다.
-const sealBenchmarkTimeout = 30 * time.Second
-
 // Deps는 Transit 라우터가 필요로 하는 상위 계층 서비스들을 모은 것이다.
 type Deps struct {
-	Barrier *barrier.Barrier
-	Transit *transit.TransitService
+	ReservedKey string
+	Barrier     *barrier.Barrier
+	Transit     *transit.TransitService
 
 	// Seal은 GET /v1/sys/seal-profile이 "지금 이 서버가 실제로 조립한 seal의
 	// 특성"을 보여주기 위해서만 쓰인다 — admin 라우터의 init/unseal과 달리
@@ -48,14 +31,14 @@ type Deps struct {
 	Seal seal.Seal
 
 	// Verifier: 설정돼 있으면(KMS_AUTHN=on) 이 라우터의 모든 요청에
-	// ServiceAccount 토큰 인증을 강제한다. nil이면(KMS_AUTHN=off, 기본값)
+	// ServiceAccount 토큰 인증을 강제한다. nil이면(격리된 테스트 전용)
 	// 인증 없이 통과시킨다 — 로컬 개발/테스트가 토큰 없는 curl로 이뤄지는
 	// 현재 동작을 깨지 않기 위한 기본값이다.
 	Verifier *authn.Verifier
 
 	// Authorizer: 설정돼 있으면(KMS_AUTHZ=on) encrypt/decrypt/rewrap
 	// 세 라우트에 SubjectAccessReview 기반 인가를 강제한다. nil이면
-	// (KMS_AUTHZ=off, 기본값) 인증만 통과하면 모든 키에 접근할 수 있다.
+	// (격리된 테스트 전용) 인증만 통과하면 모든 키에 접근할 수 있다.
 	// seal-profile/seal-benchmark은 특정 키를 대상으로 하지 않는 진단용
 	// 엔드포인트라 인가 대상에서 제외한다 — 이 둘을 Admin이 아니라 권한이
 	// 최소화된 Transit에 둔 취지(벤치마크 실행기 같은 호출자가 키 관리
@@ -69,6 +52,15 @@ type Deps struct {
 // 없다 — internal/api/admin.NewRouter가 별도로 제공한다.
 func NewRouter(deps Deps) http.Handler {
 	r := chi.NewRouter()
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if deps.ReservedKey != "" && strings.HasSuffix(r.URL.Path, "/"+deps.ReservedKey) {
+				http.Error(w, "reserved key", 403)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	})
 
 	// 인증은 이 라우터의 모든 라우트(seal-profile/seal-benchmark 포함)에
 	// 적용한다 — Admin(유닉스 소켓)에는 적용하지 않는다(소켓 파일 권한과
@@ -83,7 +75,6 @@ func NewRouter(deps Deps) http.Handler {
 	// 한다. 실제 barrier/seal 상태를 바꾸지 않는 순수 조회·측정이므로
 	// sealed 여부와 무관하게 항상 응답 가능하다.
 	r.Get("/v1/sys/seal-profile", handleSealProfile(deps))
-	r.Get("/v1/sys/seal-benchmark", handleSealBenchmark())
 
 	// 암복호화는 Root Key가 메모리에 있어야만 의미가 있으므로 sealed 가드를
 	// 적용한다. 계측(metrics.InstrumentTransit)과 인가는 라우트별로 다른
@@ -161,16 +152,6 @@ func handleSealProfile(deps Deps) http.HandlerFunc {
 // Init/Unseal 시간을 측정한 결과(seal.RunBenchmark)를 반환한다. 지금 서버가
 // 실제로 어떤 seal로 조립됐는지와 무관하게 항상 4개 전부를 측정한다 —
 // RunBenchmark 자체의 설계 이유는 internal/seal/benchmark.go 참고.
-func handleSealBenchmark() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		ctx, cancel := context.WithTimeout(r.Context(), sealBenchmarkTimeout)
-		defer cancel()
-
-		results := seal.RunBenchmark(ctx)
-		httputil.WriteJSON(w, http.StatusOK, results)
-	}
-}
-
 // ---- /v1/encrypt, /v1/decrypt, /v1/rewrap ----
 
 func handleEncrypt(deps Deps) http.HandlerFunc {

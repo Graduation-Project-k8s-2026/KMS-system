@@ -1,0 +1,11 @@
+.git
+.env
+**/*.key
+**/*.pem
+.kube
+**/data
+**/backups
+**/evidence
+*.tar
+**/__pycache__
+docs/review

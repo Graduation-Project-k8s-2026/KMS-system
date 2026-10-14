@@ -1,0 +1,86 @@
+{
+  "recorded_at_kst": "2026-10-11T09:59:08.784677+09:00",
+  "base_sha": "34a37352b64c9028c431d523941c517f165feb67",
+  "release_sha": null,
+  "source_state": "uncommitted implementation; no release created",
+  "branch": "infra/oci-single-node",
+  "versions": {
+    "go": "1.26.9",
+    "kubernetes_cluster": "v1.35.9",
+    "kubernetes_modules": "v0.35.9",
+    "grpc": "v1.83.2",
+    "govulncheck": "v1.8.0"
+  },
+  "product_images": {
+    "kms-server": null,
+    "kms-admin-api": null,
+    "kms-bench": null,
+    "kms-demo-app": null
+  },
+  "container_build_performed": false,
+  "deployment_performed": false,
+  "official_image_metadata": {
+    "go": {
+      "tag": "1.26.9-bookworm",
+      "image": "docker.io/library/golang@sha256:d9c68c2c51161e12fd77e4c6320687c9cd86e1af1e3ad6e6cd63ff970641453c",
+      "arm64_manifest": "sha256:3d79ef488855a5ad990b346addf552d6671f20ca2710ad29da7232e0326785de",
+      "index_sha256": "d9c68c2c51161e12fd77e4c6320687c9cd86e1af1e3ad6e6cd63ff970641453c"
+    },
+    "runtime": {
+      "tag": "bookworm-slim",
+      "image": "docker.io/library/debian@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587",
+      "arm64_manifest": "sha256:a1b86db52ce3daef089e45aabe36dfec4091f82464c25c1fdcf03de197cbe82a",
+      "note": "dated tag bookworm-20260928-slim returned 404; resolved bookworm-slim once and locked immutable digest"
+    },
+    "prometheus": {
+      "tag": "v3.13.4",
+      "image": "docker.io/prom/prometheus@sha256:87861b8cf91579109319ebc300f3f1060e6da9c05d6ae8ad15a20c879e84e32e",
+      "arm64_manifest": "sha256:765261de302accc2aa2fa1c74aed31ce51c0acd92a0a55406903dbacc18ea39c",
+      "index_sha256": "87861b8cf91579109319ebc300f3f1060e6da9c05d6ae8ad15a20c879e84e32e"
+    }
+  },
+  "local_binaries": {
+    "bench": {
+      "sha256": "3a55f0763208690dd66a583cdaf207e8a5176fc03ae29153a698e81d3780d0c5",
+      "platform": "linux/arm64",
+      "kind": "local_binary_not_container_image"
+    },
+    "server": {
+      "sha256": "1138f59208c9b93363b90b9f482d927efcfbbd417abbebbbffbb4c2df8861547",
+      "platform": "linux/arm64",
+      "kind": "local_binary_not_container_image"
+    },
+    "admin-api": {
+      "sha256": "7e7e5419a60c2475d5cd3d0bc29bf03d719218e0005fe0a1ca08643932a58789",
+      "platform": "linux/arm64",
+      "kind": "local_binary_not_container_image"
+    },
+    "demo-app": {
+      "sha256": "d9d5303400597e82ce35e9af4fce5d02b047b401aa75dffa7eec871fbe14e717",
+      "platform": "linux/arm64",
+      "kind": "local_binary_not_container_image"
+    }
+  },
+  "recorded_at_utc": "2026-10-11T01:30:28.165323+00:00",
+  "source_manifest": {
+    "path": "evidence/contracts/source-manifest.sha256",
+    "sha256": "fd8b5a8bf9bb7db2264ceebc407622a74d98207d021155d2518b0699fd8979b2",
+    "file_count": 183,
+    "scope": "tracked and untracked non-ignored source/tests/scripts/templates excluding docs/; uncommitted working tree"
+  },
+  "verification": {
+    "vet": "pass",
+    "race": "pass; go test -race ./... -count=1",
+    "contract": "pass; all Go packages -count=1 and eight Python tests",
+    "kms_v2": "pass",
+    "arm64_local_binaries": "pass",
+    "govulncheck_callable": 0,
+    "govulncheck_imported_packages": 0,
+    "govulncheck_module_warnings": 1,
+    "cluster_checks": "not run in this implementation phase",
+    "govulncheck_completed_at_utc": "2026-10-11T01:28:21.329202+00:00",
+    "latest_report": "contract-readiness.md",
+    "evidence_directory": "evidence/contracts",
+    "image_build_readiness": "local implementation gate passed; source commit/release SHA pending"
+  }
+}

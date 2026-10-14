@@ -1,0 +1,149 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kms-admin
+  namespace: kms-system
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: kms-admin
+  template:
+    metadata:
+      labels:
+        app: kms-admin
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: ${NODE_NAME}
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      serviceAccountName: kms-admin
+      automountServiceAccountToken: true
+      securityContext:
+        runAsUser: 10001
+        runAsGroup: 10001
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: admin
+        image: ${ADMIN_IMAGE}
+        imagePullPolicy: Never
+        command:
+        - /usr/local/bin/admin-api
+        env:
+        - name: ADMIN_API_ADDR
+          value: 127.0.0.1:8201
+        - name: KMS_ADMIN_SOCKET
+          value: /run/kms/admin.sock
+        - name: ADMIN_API_AUTH_MODE
+          value: tailscale
+        - name: ADMIN_API_ROLES_FILE
+          value: /etc/kms-gui/roles.json
+        - name: ADMIN_API_PUBLIC_ORIGIN
+          value: https://${GUI_FQDN}
+        - name: ADMIN_API_DATA_DIR
+          value: /admin-data
+        - name: ADMIN_API_METRICS_URL
+          value: ''
+        - name: ADMIN_API_PROMETHEUS_URL
+          value: http://127.0.0.1:9090
+        - name: ADMIN_API_JOB_NAMESPACE
+          value: kms-bench
+        - name: ADMIN_API_PLUGIN_NAMESPACE
+          value: kms-bench-plugin
+        - name: ADMIN_API_E2E_NAMESPACE
+          value: kms-bench-e2e
+        - name: ADMIN_API_BENCH_IMAGE
+          value: ${BENCH_IMAGE}
+        - name: ADMIN_API_INGEST_ADDR
+          value: ${NODE_IP}:8202
+        - name: ADMIN_API_INGEST_TLS_CERT
+          value: /etc/ingest-tls/tls.crt
+        - name: ADMIN_API_INGEST_TLS_KEY
+          value: /etc/ingest-tls/tls.key
+        - name: ADMIN_API_INGEST_AUDIENCE
+          value: kms-bench-results
+        - name: ADMIN_API_SOURCE_SHA
+          value: ${SOURCE_SHA}
+        - name: ADMIN_API_SERVER_VERSION
+          value: ${SERVER_VERSION}
+        - name: ADMIN_API_TRANSIT_URL
+          value: https://kms-transit.kube-system.svc.cluster.local:8200
+        - name: ADMIN_API_INGEST_URL
+          value: https://kms-ingest.kms-system.svc.cluster.local:8202
+        - name: ADMIN_API_CORE_AUDIT_DIR
+          value: /core-audit
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            memory: 768Mi
+        readinessProbe:
+          httpGet:
+            host: 127.0.0.1
+            path: /readyz
+            port: 8201
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            host: 127.0.0.1
+            path: /healthz
+            port: 8201
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        startupProbe:
+          httpGet:
+            host: 127.0.0.1
+            path: /healthz
+            port: 8201
+          failureThreshold: 60
+          periodSeconds: 5
+        volumeMounts:
+        - name: admin-socket
+          mountPath: /run/kms
+        - name: data
+          mountPath: /admin-data
+        - name: roles
+          mountPath: /etc/kms-gui
+          readOnly: true
+        - name: ingest-tls
+          mountPath: /etc/ingest-tls
+          readOnly: true
+        - name: core-audit
+          mountPath: /core-audit
+          readOnly: true
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: admin-socket
+        hostPath:
+          path: /run/custom-kms/admin
+          type: Directory
+      - name: data
+        persistentVolumeClaim:
+          claimName: kms-admin-data
+      - name: roles
+        hostPath:
+          path: /etc/custom-kms/gui
+          type: Directory
+      - name: ingest-tls
+        hostPath:
+          path: /etc/custom-kms/ingest-tls
+          type: Directory
+      - name: core-audit
+        hostPath:
+          path: /var/lib/custom-kms/core-audit
+          type: Directory
+      - name: tmp
+        emptyDir:
+          sizeLimit: 64Mi

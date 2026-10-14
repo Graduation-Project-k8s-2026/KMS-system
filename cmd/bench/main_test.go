@@ -271,7 +271,7 @@ func TestRun_Submit_SendsResultToAdminAPI(t *testing.T) {
 	}
 }
 
-func TestRun_Submit_FailureKeepsOutputAndOnlyWarns(t *testing.T) {
+func TestRun_Submit_FailureKeepsOutputAndReturnsError(t *testing.T) {
 	transit := newFakeTransitServer(t, "demo")
 	defer transit.Close()
 
@@ -294,16 +294,14 @@ func TestRun_Submit_FailureKeepsOutputAndOnlyWarns(t *testing.T) {
 			"--addr", transit.URL, "--key", "demo", "--op", "encrypt", "--count", "5", "--warmup", "1",
 			"--format", "json", "--output", path, "--submit", submitURL,
 		}, &stdout, &stderr)
-		if err != nil {
-			t.Fatalf("%s: run must succeed even if submit fails, got %v", name, err)
+		if err == nil {
+			t.Fatalf("%s: upload failure must fail the run", name)
 		}
 		data, rerr := os.ReadFile(path)
 		if rerr != nil || !strings.Contains(string(data), `"operation": "encrypt"`) {
 			t.Errorf("%s: --output file must still be written (err=%v)", name, rerr)
 		}
-		if !strings.Contains(stderr.String(), "warning") || !strings.Contains(stderr.String(), "--submit") {
-			t.Errorf("%s: expected a warning on stderr, got:\n%s", name, stderr.String())
-		}
+
 	}
 }
 
@@ -316,7 +314,7 @@ func TestRun_Submit_FailureStillPrintsStdoutTable(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := run([]string{"--addr", transit.URL, "--key", "demo", "--op", "encrypt", "--count", "5", "--warmup", "1", "--submit", deadURL}, &stdout, &stderr)
-	if err != nil || !strings.Contains(stdout.String(), "OPERATION") {
+	if err == nil || !strings.Contains(stdout.String(), "OPERATION") {
 		t.Fatalf("err=%v stdout=%q", err, stdout.String())
 	}
 }

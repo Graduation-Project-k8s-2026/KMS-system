@@ -1,24 +1,28 @@
-// cmd/admin-api: 관리 API 프로세스 실행 진입점. KMS 서버(cmd/server)와는
-// 별개의 프로세스로 떠서, 네트워크(HTTP)로 받은 관리 요청을 그대로
-// admin.sock(유닉스 도메인 소켓)에 중계하고 /healthz, /readyz를 제공한다.
-// 웹 UI 서빙은 이번 범위가 아니다 — 별도 작업에서 다룬다.
-//
-// 이 프로세스는 인증도 TLS도 없다 — 신뢰된 네트워크 밖에 노출하면 안 된다.
+// cmd/admin-api serves authenticated loopback management and a separate TLS result ingest listener.
 package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
+	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/audit"
+	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/jobs"
+	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/security"
+	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/storage"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/adminapi"
-	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/dashboard"
 )
 
 // shutdownTimeout: SIGINT/SIGTERM 수신 후 진행 중인 요청(admin.sock으로
@@ -26,62 +30,109 @@ import (
 const shutdownTimeout = 10 * time.Second
 
 func main() {
-	addr := getenvDefault("ADMIN_API_ADDR", ":8201")
-	socketPath := getenvDefault("KMS_ADMIN_SOCKET", "/var/run/kms/admin.sock")
-
-	if err := checkSocketExists(socketPath); err != nil {
-		log.Fatalf("%v (KMS 서버가 아직 기동되지 않았을 수 있습니다 — cmd/server가 이 경로에 admin.sock을 만들어야 합니다)", err)
-	}
-
-	log.Print("admin API is running without authentication or TLS — do not expose outside a trusted network")
-	log.Print("the bench result upload/delete APIs (/api/bench/results) are also unauthenticated")
-
-	dashCfg, err := dashboard.ConfigFromEnv(os.LookupEnv, socketPath)
-	if err != nil {
+	if err := serve(); err != nil {
 		log.Fatal(err)
 	}
-	dash, err := dashboard.NewService(dashCfg)
+}
+func serve() error {
+	addr := getenvDefault("ADMIN_API_ADDR", "127.0.0.1:8201")
+	if addr != "127.0.0.1:8201" {
+		return fmt.Errorf("management must bind 127.0.0.1:8201")
+	}
+	if getenvDefault("ADMIN_API_AUTH_MODE", "tailscale") != "tailscale" {
+		return fmt.Errorf("tailscale authentication required")
+	}
+	auth, err := adminapi.NewSecurity(os.Getenv("ADMIN_API_ROLES_FILE"), os.Getenv("ADMIN_API_PUBLIC_ORIGIN"))
 	if err != nil {
-		log.Fatalf("dashboard: %v", err)
+		return err
 	}
-	if dashCfg.MetricsURL == "" {
-		log.Printf("dashboard: metrics collection disabled (%s is empty)", dashboard.EnvMetricsURL)
-	} else {
-		log.Printf("dashboard: scraping %s every %s, keeping %s", dashCfg.MetricsURL, dashCfg.MetricsInterval, dashCfg.MetricsWindow)
-	}
-	log.Printf("dashboard: bench results dir=%s", dashCfg.BenchDir)
-
-	collectCtx, stopCollect := context.WithCancel(context.Background())
-	defer stopCollect()
-	go dash.Run(collectCtx)
-
-	router := adminapi.NewRouter(adminapi.Deps{SocketPath: socketPath, Dashboard: dash})
-	srv := &http.Server{Addr: addr, Handler: router}
-
-	log.Printf("admin-api starting: addr=%s admin_socket=%s", addr, socketPath)
-
-	serverErr := make(chan error, 1)
-	go func() {
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			serverErr <- err
+	for _, key := range []string{"ADMIN_API_INGEST_ADDR", "ADMIN_API_DATA_DIR", "ADMIN_API_PROMETHEUS_URL", "ADMIN_API_BENCH_IMAGE", "ADMIN_API_SOURCE_SHA", "ADMIN_API_SERVER_VERSION", "ADMIN_API_TRANSIT_URL", "ADMIN_API_INGEST_URL", "ADMIN_API_INGEST_TLS_CERT", "ADMIN_API_INGEST_TLS_KEY"} {
+		if os.Getenv(key) == "" {
+			return fmt.Errorf("%s required", key)
 		}
-	}()
-
+	}
+	if !strings.Contains(os.Getenv("ADMIN_API_BENCH_IMAGE"), "@sha256:") {
+		return fmt.Errorf("bench image must be pinned by digest")
+	}
+	if os.Getenv("ADMIN_API_PROMETHEUS_URL") != "http://127.0.0.1:9090" {
+		return fmt.Errorf("Prometheus must use host loopback")
+	}
+	if os.Getenv("ADMIN_API_METRICS_URL") != "" {
+		return fmt.Errorf("direct metrics scrape is disabled; use Prometheus")
+	}
+	store, err := storage.OpenFileStorage(os.Getenv("ADMIN_API_DATA_DIR"))
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	auditLog, err := audit.New(filepath.Join(os.Getenv("ADMIN_API_DATA_DIR"), "audit"))
+	if err != nil {
+		return err
+	}
+	cfg, err := rest.InClusterConfig()
+	if err != nil {
+		return err
+	}
+	cfg.Timeout = 5 * time.Second
+	client, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return err
+	}
+	service := &jobs.Service{Client: client, Store: store, Config: jobs.Config{Namespace: getenvDefault("ADMIN_API_JOB_NAMESPACE", "kms-bench"), PluginNamespace: getenvDefault("ADMIN_API_PLUGIN_NAMESPACE", "kms-bench-plugin"), E2ENamespace: getenvDefault("ADMIN_API_E2E_NAMESPACE", "kms-bench-e2e"), Image: os.Getenv("ADMIN_API_BENCH_IMAGE"), TransitURL: os.Getenv("ADMIN_API_TRANSIT_URL"), IngestURL: os.Getenv("ADMIN_API_INGEST_URL"), Audience: getenvDefault("ADMIN_API_INGEST_AUDIENCE", "kms-bench-results"), SourceSHA: os.Getenv("ADMIN_API_SOURCE_SHA"), ServerVersion: os.Getenv("ADMIN_API_SERVER_VERSION")}}
+	if err := service.Config.Validate(); err != nil {
+		return err
+	}
+	host, port, e := net.SplitHostPort(os.Getenv("ADMIN_API_INGEST_ADDR"))
+	ip := net.ParseIP(host)
+	if e != nil || ip == nil || !ip.IsPrivate() || port != "8202" {
+		return fmt.Errorf("ingest must bind private node IP on 8202")
+	}
+	socket := getenvDefault("KMS_ADMIN_SOCKET", "/run/custom-kms/admin/admin.sock")
+	router := auth.Wrap(adminapi.NewRouter(adminapi.Deps{SocketPath: socket, Jobs: service, AuditDir: filepath.Join(os.Getenv("ADMIN_API_DATA_DIR"), "audit"), CoreAuditDir: os.Getenv("ADMIN_API_CORE_AUDIT_DIR"), PrometheusURL: os.Getenv("ADMIN_API_PROMETHEUS_URL")}))
+	// Subjects come from the trusted loopback Serve boundary; bodies/headers are never logged.
+	router = auditLog.Middleware(auth.Subject, router)
+	srv := security.Server(addr, router)
+	ingest := security.Server(getenvDefault("ADMIN_API_INGEST_ADDR", ":8202"), auditLog.Middleware(func(*http.Request) string { return "unauthenticated-job" }, service.Ingest()))
+	pair, err := tls.LoadX509KeyPair(os.Getenv("ADMIN_API_INGEST_TLS_CERT"), os.Getenv("ADMIN_API_INGEST_TLS_KEY"))
+	if err != nil {
+		return fmt.Errorf("ingest TLS certificate/key required")
+	}
+	ingest.TLSConfig.Certificates = []tls.Certificate{pair}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-
+	errs := make(chan error, 2)
+	go func() { errs <- srv.ListenAndServe() }()
+	go func() { errs <- ingest.ListenAndServeTLS("", "") }()
+	reconcileDone := make(chan struct{})
+	go func() {
+		defer close(reconcileDone)
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			if err := service.Reconcile(ctx); err != nil {
+				log.Print("job reconciliation pending: backend unavailable")
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
 	select {
 	case <-ctx.Done():
-		log.Print("shutdown signal received, shutting down")
-	case err := <-serverErr:
-		log.Fatalf("admin-api stopped: %v", err)
+	case err = <-errs:
 	}
-
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	stop()
+	<-reconcileDone
+	shutdown, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Printf("shutdown error: %v", err)
+	_ = srv.Shutdown(shutdown)
+	_ = ingest.Shutdown(shutdown)
+	if errors.Is(err, http.ErrServerClosed) {
+		return nil
 	}
+	return err
 }
 
 // checkSocketExists는 admin.sock 경로에 파일이 있는지만 확인한다 — 실제로

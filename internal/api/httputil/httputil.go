@@ -43,6 +43,14 @@ func WriteError(w http.ResponseWriter, err error, fallbackStatus int) {
 	var policyErr *keys.KeyPolicyError
 
 	switch {
+	case errors.Is(err, keys.ErrAlreadyExists):
+		WriteJSONError(w, http.StatusConflict, "key already exists")
+	case errors.Is(err, keys.ErrBackend):
+		WriteJSONError(w, http.StatusServiceUnavailable, "key backend unavailable")
+	case errors.Is(err, barrier.ErrRootVerification):
+		WriteJSONError(w, 400, "root verification failed")
+	case errors.Is(err, barrier.ErrInitialized):
+		WriteJSONError(w, 409, "already initialized")
 	case errors.As(err, &notFound):
 		WriteJSONError(w, http.StatusNotFound, err.Error())
 	case errors.As(err, &policyErr):

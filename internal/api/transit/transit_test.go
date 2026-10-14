@@ -224,26 +224,15 @@ func TestRouter_SealProfile_WorksWhileSealed(t *testing.T) {
 	}
 }
 
-// TestRouter_SealBenchmark_WorksWhileSealed_ReturnsFourResults는
-// GET /v1/sys/seal-benchmark도 sealed 상태에서 동작하며 dev/shamir/tpm/k8s
-// 4개 결과를 반환하는지 확인한다.
-func TestRouter_SealBenchmark_WorksWhileSealed_ReturnsFourResults(t *testing.T) {
-	env := newTestEnv(t) // sealed 상태 그대로
-
+// Costly seal comparison is never available in the production Transit router.
+func TestRouter_SealBenchmark_Removed(t *testing.T) {
+	env := newTestEnv(t)
 	resp, err := http.Get(env.Server.URL + "/v1/sys/seal-benchmark")
 	if err != nil {
-		t.Fatalf("GET seal-benchmark failed: %v", err)
+		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want %d (sealed guard should not apply here)", resp.StatusCode, http.StatusOK)
-	}
-
-	var results []struct {
-		Type string `json:"type"`
-	}
-	decodeJSON(t, resp, &results)
-	if len(results) != 4 {
-		t.Fatalf("len(results) = %d, want 4", len(results))
+	if resp.StatusCode != 404 {
+		t.Fatalf("status %d", resp.StatusCode)
 	}
 }

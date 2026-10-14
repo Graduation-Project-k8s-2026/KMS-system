@@ -1,0 +1,23 @@
+condition                 conc    ops/sec  vs base   p50(ms)   p99(ms)  errors
+------------------------------------------------------------------------------
+baseline                     1     6959.3   100.0%      0.12      0.33       0
+baseline                    10    22945.5   100.0%      0.33      1.18       0
+baseline                    50    26709.0   100.0%      1.63      5.57       0
+authn-only                   1     5051.6    72.6%      0.18      0.48       0
+authn-only                  10    16589.2    72.3%      0.53      1.41       0
+authn-only                  50    19814.7    74.2%      2.17      7.26       0
+authz-cached                 1     5045.2    72.5%      0.18      0.49       0
+authz-cached                10    16758.4    73.0%      0.51      1.41       0
+authz-cached                50    19868.0    74.4%      2.16      7.19       0
+authz-uncached-qps50         1       58.0     0.8%     20.09     21.19       0
+authz-uncached-qps50        10       50.0     0.2%    199.95    201.15       0
+authz-uncached-qps50        50       50.0     0.2%    999.86   1001.21       0
+authz-uncached-nolimit       1     1170.4    16.8%      0.81      1.26       0
+authz-uncached-nolimit      10     5407.7    23.6%      1.73      3.52       0
+authz-uncached-nolimit      50     8289.8    31.0%      5.52     16.26       0
+
+SAR 시간 분해 (조건 전체 평균, 워밍업 포함)
+condition                    calls   sar(ms)   rt(ms)  wait(ms)
+authz-cached                    59      4.30     3.80      0.50
+authz-uncached-qps50          1701    374.24     0.80    373.44
+authz-uncached-nolimit      148792      3.00     2.59      0.41

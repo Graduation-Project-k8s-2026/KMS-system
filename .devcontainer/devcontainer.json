@@ -1,0 +1,14 @@
+{
+  "name": "kms-system",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+  "features": {
+    "ghcr.io/devcontainers/features/go:1": { "version": "1.26.9" },
+    "ghcr.io/devcontainers/features/node:1": {},
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+    "ghcr.io/devcontainers/features/kubectl-helm-minikube:1": { "minikube": "none", "helm": "none" },
+    "ghcr.io/devcontainers-extra/features/kind:1": {},
+    "ghcr.io/tailscale/codespace/tailscale": {}
+  },
+  "postCreateCommand": "npm i -g @anthropic-ai/claude-code",
+  "customizations": { "vscode": { "extensions": ["golang.go"] } }
+}

@@ -1,0 +1,220 @@
+# HELP go_gc_duration_seconds A summary of the wall-time pause (stop-the-world) duration in garbage collection cycles.
+# TYPE go_gc_duration_seconds summary
+go_gc_duration_seconds{quantile="0"} 0.000107854
+go_gc_duration_seconds{quantile="0.25"} 0.000219705
+go_gc_duration_seconds{quantile="0.5"} 0.0002763
+go_gc_duration_seconds{quantile="0.75"} 0.000344648
+go_gc_duration_seconds{quantile="1"} 0.000499687
+go_gc_duration_seconds_sum 1.486551975
+go_gc_duration_seconds_count 6380
+# HELP go_gc_gogc_percent Heap size target percentage configured by the user, otherwise 100. This value is set by the GOGC environment variable, and the runtime/debug.SetGCPercent function. Sourced from /gc/gogc:percent.
+# TYPE go_gc_gogc_percent gauge
+go_gc_gogc_percent 100
+# HELP go_gc_gomemlimit_bytes Go runtime memory limit configured by the user, otherwise math.MaxInt64. This value is set by the GOMEMLIMIT environment variable, and the runtime/debug.SetMemoryLimit function. Sourced from /gc/gomemlimit:bytes.
+# TYPE go_gc_gomemlimit_bytes gauge
+go_gc_gomemlimit_bytes 9.223372036854776e+18
+# HELP go_goroutines Number of goroutines that currently exist.
+# TYPE go_goroutines gauge
+go_goroutines 12
+# HELP go_info Information about the Go environment.
+# TYPE go_info gauge
+go_info{version="go1.23.4"} 1
+# HELP go_memstats_alloc_bytes Number of bytes allocated in heap and currently in use. Equals to /memory/classes/heap/objects:bytes.
+# TYPE go_memstats_alloc_bytes gauge
+go_memstats_alloc_bytes 4.777072e+06
+# HELP go_memstats_alloc_bytes_total Total number of bytes allocated in heap until now, even if released already. Equals to /gc/heap/allocs:bytes.
+# TYPE go_memstats_alloc_bytes_total counter
+go_memstats_alloc_bytes_total 1.14448884e+10
+# HELP go_memstats_buck_hash_sys_bytes Number of bytes used by the profiling bucket hash table. Equals to /memory/classes/profiling/buckets:bytes.
+# TYPE go_memstats_buck_hash_sys_bytes gauge
+go_memstats_buck_hash_sys_bytes 5397
+# HELP go_memstats_frees_total Total number of heap objects frees. Equals to /gc/heap/frees:objects + /gc/heap/tiny/allocs:objects.
+# TYPE go_memstats_frees_total counter
+go_memstats_frees_total 4.4783434e+07
+# HELP go_memstats_gc_sys_bytes Number of bytes used for garbage collection system metadata. Equals to /memory/classes/metadata/other:bytes.
+# TYPE go_memstats_gc_sys_bytes gauge
+go_memstats_gc_sys_bytes 3.179896e+06
+# HELP go_memstats_heap_alloc_bytes Number of heap bytes allocated and currently in use, same as go_memstats_alloc_bytes. Equals to /memory/classes/heap/objects:bytes.
+# TYPE go_memstats_heap_alloc_bytes gauge
+go_memstats_heap_alloc_bytes 4.777072e+06
+# HELP go_memstats_heap_idle_bytes Number of heap bytes waiting to be used. Equals to /memory/classes/heap/released:bytes + /memory/classes/heap/free:bytes.
+# TYPE go_memstats_heap_idle_bytes gauge
+go_memstats_heap_idle_bytes 8.863744e+06
+# HELP go_memstats_heap_inuse_bytes Number of heap bytes that are in use. Equals to /memory/classes/heap/objects:bytes + /memory/classes/heap/unused:bytes
+# TYPE go_memstats_heap_inuse_bytes gauge
+go_memstats_heap_inuse_bytes 8.863744e+06
+# HELP go_memstats_heap_objects Number of currently allocated objects. Equals to /gc/heap/objects:objects.
+# TYPE go_memstats_heap_objects gauge
+go_memstats_heap_objects 16705
+# HELP go_memstats_heap_released_bytes Number of heap bytes released to OS. Equals to /memory/classes/heap/released:bytes.
+# TYPE go_memstats_heap_released_bytes gauge
+go_memstats_heap_released_bytes 6.651904e+06
+# HELP go_memstats_heap_sys_bytes Number of heap bytes obtained from system. Equals to /memory/classes/heap/objects:bytes + /memory/classes/heap/unused:bytes + /memory/classes/heap/released:bytes + /memory/classes/heap/free:bytes.
+# TYPE go_memstats_heap_sys_bytes gauge
+go_memstats_heap_sys_bytes 1.7727488e+07
+# HELP go_memstats_last_gc_time_seconds Number of seconds since 1970 of last garbage collection.
+# TYPE go_memstats_last_gc_time_seconds gauge
+go_memstats_last_gc_time_seconds 1.791258569521098e+09
+# HELP go_memstats_mallocs_total Total number of heap objects allocated, both live and gc-ed. Semantically a counter version for go_memstats_heap_objects gauge. Equals to /gc/heap/allocs:objects + /gc/heap/tiny/allocs:objects.
+# TYPE go_memstats_mallocs_total counter
+go_memstats_mallocs_total 4.4800139e+07
+# HELP go_memstats_mcache_inuse_bytes Number of bytes in use by mcache structures. Equals to /memory/classes/metadata/mcache/inuse:bytes.
+# TYPE go_memstats_mcache_inuse_bytes gauge
+go_memstats_mcache_inuse_bytes 24000
+# HELP go_memstats_mcache_sys_bytes Number of bytes used for mcache structures obtained from system. Equals to /memory/classes/metadata/mcache/inuse:bytes + /memory/classes/metadata/mcache/free:bytes.
+# TYPE go_memstats_mcache_sys_bytes gauge
+go_memstats_mcache_sys_bytes 31200
+# HELP go_memstats_mspan_inuse_bytes Number of bytes in use by mspan structures. Equals to /memory/classes/metadata/mspan/inuse:bytes.
+# TYPE go_memstats_mspan_inuse_bytes gauge
+go_memstats_mspan_inuse_bytes 354080
+# HELP go_memstats_mspan_sys_bytes Number of bytes used for mspan structures obtained from system. Equals to /memory/classes/metadata/mspan/inuse:bytes + /memory/classes/metadata/mspan/free:bytes.
+# TYPE go_memstats_mspan_sys_bytes gauge
+go_memstats_mspan_sys_bytes 424320
+# HELP go_memstats_next_gc_bytes Number of heap bytes when next garbage collection will take place. Equals to /gc/heap/goal:bytes.
+# TYPE go_memstats_next_gc_bytes gauge
+go_memstats_next_gc_bytes 9.179048e+06
+# HELP go_memstats_other_sys_bytes Number of bytes used for other system allocations. Equals to /memory/classes/other:bytes.
+# TYPE go_memstats_other_sys_bytes gauge
+go_memstats_other_sys_bytes 3.919395e+06
+# HELP go_memstats_stack_inuse_bytes Number of bytes obtained from system for stack allocator in non-CGO environments. Equals to /memory/classes/heap/stacks:bytes.
+# TYPE go_memstats_stack_inuse_bytes gauge
+go_memstats_stack_inuse_bytes 3.244032e+06
+# HELP go_memstats_stack_sys_bytes Number of bytes obtained from system for stack allocator. Equals to /memory/classes/heap/stacks:bytes + /memory/classes/os-stacks:bytes.
+# TYPE go_memstats_stack_sys_bytes gauge
+go_memstats_stack_sys_bytes 3.244032e+06
+# HELP go_memstats_sys_bytes Number of bytes obtained from system. Equals to /memory/classes/total:byte.
+# TYPE go_memstats_sys_bytes gauge
+go_memstats_sys_bytes 2.8531728e+07
+# HELP go_sched_gomaxprocs_threads The current runtime.GOMAXPROCS setting, or the number of operating system threads that can execute user-level Go code simultaneously. Sourced from /sched/gomaxprocs:threads.
+# TYPE go_sched_gomaxprocs_threads gauge
+go_sched_gomaxprocs_threads 20
+# HELP go_threads Number of OS threads created.
+# TYPE go_threads gauge
+go_threads 32
+# HELP kms_authz_apiserver_roundtrip_seconds SubjectAccessReview 호출의 순수 HTTP 왕복 시간(초, rate limiter 대기 제외).
+# TYPE kms_authz_apiserver_roundtrip_seconds histogram
+kms_authz_apiserver_roundtrip_seconds_bucket{le="0.005"} 0
+kms_authz_apiserver_roundtrip_seconds_bucket{le="0.01"} 0
+kms_authz_apiserver_roundtrip_seconds_bucket{le="0.025"} 0
+kms_authz_apiserver_roundtrip_seconds_bucket{le="0.05"} 0
+kms_authz_apiserver_roundtrip_seconds_bucket{le="0.1"} 0
+kms_authz_apiserver_roundtrip_seconds_bucket{le="0.25"} 0
+kms_authz_apiserver_roundtrip_seconds_bucket{le="0.5"} 0
+kms_authz_apiserver_roundtrip_seconds_bucket{le="1"} 0
+kms_authz_apiserver_roundtrip_seconds_bucket{le="2.5"} 0
+kms_authz_apiserver_roundtrip_seconds_bucket{le="5"} 0
+kms_authz_apiserver_roundtrip_seconds_bucket{le="10"} 0
+kms_authz_apiserver_roundtrip_seconds_bucket{le="+Inf"} 0
+kms_authz_apiserver_roundtrip_seconds_sum 0
+kms_authz_apiserver_roundtrip_seconds_count 0
+# HELP kms_authz_cache_entries 현재 인가 판단 캐시에 들어있는 항목 수.
+# TYPE kms_authz_cache_entries gauge
+kms_authz_cache_entries 0
+# HELP kms_authz_sar_duration_seconds SubjectAccessReview 호출 지연(초).
+# TYPE kms_authz_sar_duration_seconds histogram
+kms_authz_sar_duration_seconds_bucket{le="0.005"} 0
+kms_authz_sar_duration_seconds_bucket{le="0.01"} 0
+kms_authz_sar_duration_seconds_bucket{le="0.025"} 0
+kms_authz_sar_duration_seconds_bucket{le="0.05"} 0
+kms_authz_sar_duration_seconds_bucket{le="0.1"} 0
+kms_authz_sar_duration_seconds_bucket{le="0.25"} 0
+kms_authz_sar_duration_seconds_bucket{le="0.5"} 0
+kms_authz_sar_duration_seconds_bucket{le="1"} 0
+kms_authz_sar_duration_seconds_bucket{le="2.5"} 0
+kms_authz_sar_duration_seconds_bucket{le="5"} 0
+kms_authz_sar_duration_seconds_bucket{le="10"} 0
+kms_authz_sar_duration_seconds_bucket{le="+Inf"} 0
+kms_authz_sar_duration_seconds_sum 0
+kms_authz_sar_duration_seconds_count 0
+# HELP kms_key_versions_total 모든 키의 버전 총합(회전으로 늘어난 버전 수 포함).
+# TYPE kms_key_versions_total gauge
+kms_key_versions_total 1
+# HELP kms_keys_total 현재 등록된 키 개수.
+# TYPE kms_keys_total gauge
+kms_keys_total 1
+# HELP kms_seal_last_unsealed_timestamp_seconds 이 프로세스가 barrier를 unsealed 상태로 마지막으로 관찰한 시각(Unix epoch 초). 한 번도 관찰하지 못했으면 0. barrier.Unseal() 호출 시각이 아니라 이 collector가 스크레이프 시점에 처음 unsealed를 감지한 시각이라, 부팅 시 이미 unsealed였다면(KMS_AUTO_UNSEAL 등) 실제 unseal 시각보다 늦을 수 있다.
+# TYPE kms_seal_last_unsealed_timestamp_seconds gauge
+kms_seal_last_unsealed_timestamp_seconds 1.791258569e+09
+# HELP kms_seal_sealed barrier가 현재 sealed 상태인지 (1=sealed, 0=unsealed).
+# TYPE kms_seal_sealed gauge
+kms_seal_sealed 0
+# HELP kms_transit_payload_bytes 처리한 평문/암호문 크기(바이트) (operation별).
+# TYPE kms_transit_payload_bytes histogram
+kms_transit_payload_bytes_bucket{operation="encrypt",le="64"} 1
+kms_transit_payload_bytes_bucket{operation="encrypt",le="128"} 1
+kms_transit_payload_bytes_bucket{operation="encrypt",le="256"} 1
+kms_transit_payload_bytes_bucket{operation="encrypt",le="512"} 1
+kms_transit_payload_bytes_bucket{operation="encrypt",le="1024"} 566223
+kms_transit_payload_bytes_bucket{operation="encrypt",le="2048"} 566223
+kms_transit_payload_bytes_bucket{operation="encrypt",le="4096"} 566223
+kms_transit_payload_bytes_bucket{operation="encrypt",le="8192"} 566223
+kms_transit_payload_bytes_bucket{operation="encrypt",le="16384"} 566223
+kms_transit_payload_bytes_bucket{operation="encrypt",le="32768"} 566223
+kms_transit_payload_bytes_bucket{operation="encrypt",le="65536"} 566223
+kms_transit_payload_bytes_bucket{operation="encrypt",le="131072"} 566223
+kms_transit_payload_bytes_bucket{operation="encrypt",le="+Inf"} 566223
+kms_transit_payload_bytes_sum{operation="encrypt"} 5.79811329e+08
+kms_transit_payload_bytes_count{operation="encrypt"} 566223
+# HELP kms_transit_request_duration_seconds Transit 암복호화 요청 처리 시간(초) (operation별).
+# TYPE kms_transit_request_duration_seconds histogram
+kms_transit_request_duration_seconds_bucket{operation="encrypt",le="1e-06"} 0
+kms_transit_request_duration_seconds_bucket{operation="encrypt",le="2.335721469090122e-06"} 0
+kms_transit_request_duration_seconds_bucket{operation="encrypt",le="5.455594781168518e-06"} 0
+kms_transit_request_duration_seconds_bucket{operation="encrypt",le="1.2742749857031336e-05"} 8
+kms_transit_request_duration_seconds_bucket{operation="encrypt",le="2.9763514416313176e-05"} 151732
+kms_transit_request_duration_seconds_bucket{operation="encrypt",le="6.951927961775606e-05"} 364330
+kms_transit_request_duration_seconds_bucket{operation="encrypt",le="0.00016237767391887213"} 439236
+kms_transit_request_duration_seconds_bucket{operation="encrypt",le="0.00037926901907322483"} 476813
+kms_transit_request_duration_seconds_bucket{operation="encrypt",le="0.0008858667904100825"} 511222
+kms_transit_request_duration_seconds_bucket{operation="encrypt",le="0.0020691380811147892"} 557845
+kms_transit_request_duration_seconds_bucket{operation="encrypt",le="0.004832930238571752"} 566161
+kms_transit_request_duration_seconds_bucket{operation="encrypt",le="0.011288378916846887"} 566223
+kms_transit_request_duration_seconds_bucket{operation="encrypt",le="0.026366508987303573"} 566223
+kms_transit_request_duration_seconds_bucket{operation="encrypt",le="0.061584821106602614"} 566223
+kms_transit_request_duration_seconds_bucket{operation="encrypt",le="0.1438449888287662"} 566223
+kms_transit_request_duration_seconds_bucket{operation="encrypt",le="0.33598182862837805"} 566223
+kms_transit_request_duration_seconds_bucket{operation="encrypt",le="0.784759970351461"} 566223
+kms_transit_request_duration_seconds_bucket{operation="encrypt",le="1.8329807108324352"} 566223
+kms_transit_request_duration_seconds_bucket{operation="encrypt",le="4.281332398719392"} 566223
+kms_transit_request_duration_seconds_bucket{operation="encrypt",le="9.999999999999995"} 566223
+kms_transit_request_duration_seconds_bucket{operation="encrypt",le="+Inf"} 566223
+kms_transit_request_duration_seconds_sum{operation="encrypt"} 135.6383077570011
+kms_transit_request_duration_seconds_count{operation="encrypt"} 566223
+# HELP kms_transit_requests_total Transit 암복호화 요청 수 (operation, result별).
+# TYPE kms_transit_requests_total counter
+kms_transit_requests_total{operation="encrypt",result="success"} 566223
+# HELP process_cpu_seconds_total Total user and system CPU time spent in seconds.
+# TYPE process_cpu_seconds_total counter
+process_cpu_seconds_total 93.1
+# HELP process_max_fds Maximum number of open file descriptors.
+# TYPE process_max_fds gauge
+process_max_fds 1.048576e+06
+# HELP process_network_receive_bytes_total Number of bytes received by the process over the network.
+# TYPE process_network_receive_bytes_total counter
+process_network_receive_bytes_total 2.911377714e+09
+# HELP process_network_transmit_bytes_total Number of bytes sent by the process over the network.
+# TYPE process_network_transmit_bytes_total counter
+process_network_transmit_bytes_total 2.718451395e+09
+# HELP process_open_fds Number of open file descriptors.
+# TYPE process_open_fds gauge
+process_open_fds 9
+# HELP process_resident_memory_bytes Resident memory size in bytes.
+# TYPE process_resident_memory_bytes gauge
+process_resident_memory_bytes 6.4647168e+07
+# HELP process_start_time_seconds Start time of the process since unix epoch in seconds.
+# TYPE process_start_time_seconds gauge
+process_start_time_seconds 1.79125853867e+09
+# HELP process_virtual_memory_bytes Virtual memory size in bytes.
+# TYPE process_virtual_memory_bytes gauge
+process_virtual_memory_bytes 3.591602176e+09
+# HELP process_virtual_memory_max_bytes Maximum amount of virtual memory available in bytes.
+# TYPE process_virtual_memory_max_bytes gauge
+process_virtual_memory_max_bytes 1.8446744073709552e+19
+# HELP promhttp_metric_handler_requests_in_flight Current number of scrapes being served.
+# TYPE promhttp_metric_handler_requests_in_flight gauge
+promhttp_metric_handler_requests_in_flight 1
+# HELP promhttp_metric_handler_requests_total Total number of scrapes by HTTP status code.
+# TYPE promhttp_metric_handler_requests_total counter
+promhttp_metric_handler_requests_total{code="200"} 1
+promhttp_metric_handler_requests_total{code="500"} 0
+promhttp_metric_handler_requests_total{code="503"} 0

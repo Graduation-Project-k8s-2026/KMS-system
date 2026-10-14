@@ -1,0 +1,32 @@
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/cmd/admin-api	1.079s
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/cmd/bench	1.434s
+?   	github.com/Graduation-Project-k8s-2026/KMS-system/cmd/demo-app	[no test files]
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/cmd/kms-verify	1.030s
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/cmd/server	2.610s
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/adminapi	1.112s
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/api	1.096s
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/api/admin	2.141s
+?   	github.com/Graduation-Project-k8s-2026/KMS-system/internal/api/console	[no test files]
+?   	github.com/Graduation-Project-k8s-2026/KMS-system/internal/api/dashboard	[no test files]
+?   	github.com/Graduation-Project-k8s-2026/KMS-system/internal/api/home	[no test files]
+?   	github.com/Graduation-Project-k8s-2026/KMS-system/internal/api/httputil	[no test files]
+?   	github.com/Graduation-Project-k8s-2026/KMS-system/internal/api/portal	[no test files]
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/api/transit	2.816s
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/audit	1.215s
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/authn	10.711s
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/authz	1.184s
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/barrier	1.113s
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/bench	1.340s
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/crypto	1.015s
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/dashboard	1.140s
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/demo	1.030s
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/jobs	1.490s
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/keys	1.165s
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/kmsv2	1.199s
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/metrics	1.117s
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/rotation	1.125s
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/seal	1.088s
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/security	1.237s
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/shamir	1.019s
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/storage	1.119s
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/transit	1.071s

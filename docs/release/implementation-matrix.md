@@ -1,3 +1,23 @@
+# §12–16 추가 구현·운영 검증 (2026-10-12 KST)
+
+기준 HEAD `a41b11ad11ae41df4400b622e9e1a0c5a5ac097f`. 기존 사용자 변경 `cmd/bench/release.go`와 렌더링된 운영 파일을 보존했다. 새 commit/push를 수행하지 않았으며 현재 작업 트리의 소스 hash는 `evidence/steps12-16/source-manifest.sha256`, 실제 이미지 digest는 `release-lock.json`이다.
+
+| 절 | 구현 파일 | 실제 검증 |
+|---|---|---|
+| 12.1 | `cmd/kms-verify/`, `scripts/test-kmsv2.sh`, `internal/kmsv2/service_test.go` | 배포 소켓 RPC·오류·크기·deadline·취소·동시 처리, 재시작·회전 이전 ciphertext |
+| 12.2–12.3 | `scripts/kms_ops.py`, `backup-kms.py`, `patch-apiserver-kms.py` | 정지 백업 후 기존 apiserver의 설정/소켓만 병합, 실제 root UID/GID connect |
+| 12.4–12.5 | `rewrite-secrets.py`, `migrate-secrets.py`, `rotate-kms-v2.py` | 현재 모든 Secret 재쓰기, API/etcd 집합 대조, identity 제거·재시작, keyID 1→2 |
+| 13 | `host-unseal.py`, `restore-kms.py`, `restore-control-plane.py`, `verify-reboot.py`, `export-backup-auto.py`, `export-backup.sh` | 실제 share 재unseal·별도 디렉터리 복원. 재부팅/외부 전송의 최신 상태는 verification.md |
+| 14 | `scripts/test_operations.py`, `test_release.py`, 전체 Go suite | 합격·부분 검증·보류를 T01–T18로 구분 |
+| 15 | `cmd/seal-lab/main.go`, `benchmark-release.py`, `summarize-benchmarks.py` | 별도 fixture의 Seal 5회, 실제 Transit/Plugin/E2E 각 조건별 3회 |
+| 16 | `docs/release/` 및 `collect-release.py` | 구성도·계약·실제 이미지 lock·시험표·성능 JSON/차트·복구·시연·제약 |
+
+이번 실제 실행에서 기존 Secret rewrite가 raw 목록의 TypeMeta 누락으로 실패하는 문제를 수정했다. 복원 도구는 원래 컨테이너의 설정 mount 위치와 numeric UID/GID를 보존하도록 보완했다. 해당 실패는 숨기지 않고 최종 재검증 결과와 함께 기록한다.
+
+아래는 최초 §5.2 구현 당시의 역사적 매트릭스다. 당시의 “배포 미실행/이후 작업”은 현재 완료 여부를 의미하지 않는다. 현재 상태는 이 표와 [verification.md](verification.md)가 우선한다.
+
+---
+
 # G1–G10 구현 및 로컬 검증 결과
 
 기준: rev2 §5.2.2. §5.2.3–5.2.5를 설정·데이터·시험 계약으로 사용했다. **아래 구현 완료는 현재 미커밋 소스와 로컬 시험의 완료이며, 운영 배포 합격이나 최종 릴리스를 뜻하지 않는다.** 각 시험은 [실행 기록](verification.md)의 실제 명령에 포함된다. 원본 guide와 개인 origin/branch는 보존했다.

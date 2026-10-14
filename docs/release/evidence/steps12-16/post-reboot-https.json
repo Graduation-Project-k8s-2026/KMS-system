@@ -1,0 +1,11 @@
+{
+  "recorded_at_utc": "2026-10-12T00:59:34.370346+00:00",
+  "scope": "configured private HTTPS origin from same host, no identity-header injection; not an external-device authorization test",
+  "tls_chain_and_hostname_verified": true,
+  "certificate_not_after": "Jan  9 07:50:10 2027 GMT",
+  "http_status": 401,
+  "status": "PASS_TLS_AND_ANONYMOUS_REJECTION",
+  "expected_anonymous_http_status": 401,
+  "authenticated_external_device_access_verified": false,
+  "interpretation": "Same-host request carries no authenticated Tailscale user identity; HTTP 401 is expected. Initial HTTP 200 assertion was inappropriate for this anonymous probe."
+}

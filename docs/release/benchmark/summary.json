@@ -1,0 +1,134 @@
+[
+  {
+    "provider": "identity",
+    "mode": "transit",
+    "trials": 3,
+    "failed_trials": 0,
+    "errors": 0,
+    "requests": 300,
+    "mean_roundtrips_per_second": 653.6602755601286,
+    "stdev_roundtrips_per_second": 61.42066522372384,
+    "mean_trial_p95_ms": 1.7808466666666667,
+    "mean_trial_p99_ms": 2.6414633333333333,
+    "image_digest": "docker.io/library/kms-bench@sha256:e125cde53115d74a73e6d55610658c395d65d633390e9f1094037c5cad52c8e9",
+    "spec": {
+      "scenario": "basic",
+      "op": "roundtrip",
+      "count": 100,
+      "concurrency": 1,
+      "payload_bytes": 1024,
+      "duration_seconds": 0,
+      "mode": "transit"
+    }
+  },
+  {
+    "provider": "identity",
+    "mode": "plugin",
+    "trials": 3,
+    "failed_trials": 0,
+    "errors": 0,
+    "requests": 300,
+    "mean_roundtrips_per_second": 1872.3435094659515,
+    "stdev_roundtrips_per_second": 62.399738015606275,
+    "mean_trial_p95_ms": 0.7353626666666667,
+    "mean_trial_p99_ms": 1.2827250000000001,
+    "image_digest": "docker.io/library/kms-bench@sha256:e125cde53115d74a73e6d55610658c395d65d633390e9f1094037c5cad52c8e9",
+    "spec": {
+      "scenario": "basic",
+      "op": "roundtrip",
+      "count": 100,
+      "concurrency": 1,
+      "payload_bytes": 1024,
+      "duration_seconds": 0,
+      "mode": "plugin"
+    }
+  },
+  {
+    "provider": "identity",
+    "mode": "e2e",
+    "trials": 3,
+    "failed_trials": 0,
+    "errors": 0,
+    "requests": 300,
+    "mean_roundtrips_per_second": 122.78502665320718,
+    "stdev_roundtrips_per_second": 1.815582605416744,
+    "mean_trial_p95_ms": 10.357386,
+    "mean_trial_p99_ms": 14.908709666666667,
+    "image_digest": "docker.io/library/kms-bench@sha256:e125cde53115d74a73e6d55610658c395d65d633390e9f1094037c5cad52c8e9",
+    "spec": {
+      "scenario": "basic",
+      "op": "roundtrip",
+      "count": 100,
+      "concurrency": 1,
+      "payload_bytes": 1024,
+      "duration_seconds": 0,
+      "mode": "e2e"
+    }
+  },
+  {
+    "provider": "kms-v2",
+    "mode": "transit",
+    "trials": 3,
+    "failed_trials": 0,
+    "errors": 0,
+    "requests": 300,
+    "mean_roundtrips_per_second": 636.3298007989276,
+    "stdev_roundtrips_per_second": 73.77238562842722,
+    "mean_trial_p95_ms": 1.7460596666666668,
+    "mean_trial_p99_ms": 3.4453329999999998,
+    "image_digest": "docker.io/library/kms-bench@sha256:e125cde53115d74a73e6d55610658c395d65d633390e9f1094037c5cad52c8e9",
+    "spec": {
+      "scenario": "basic",
+      "op": "roundtrip",
+      "count": 100,
+      "concurrency": 1,
+      "payload_bytes": 1024,
+      "duration_seconds": 0,
+      "mode": "transit"
+    }
+  },
+  {
+    "provider": "kms-v2",
+    "mode": "plugin",
+    "trials": 3,
+    "failed_trials": 0,
+    "errors": 0,
+    "requests": 300,
+    "mean_roundtrips_per_second": 1821.1655351830127,
+    "stdev_roundtrips_per_second": 75.28072755461076,
+    "mean_trial_p95_ms": 0.8307366666666667,
+    "mean_trial_p99_ms": 1.467432,
+    "image_digest": "docker.io/library/kms-bench@sha256:e125cde53115d74a73e6d55610658c395d65d633390e9f1094037c5cad52c8e9",
+    "spec": {
+      "scenario": "basic",
+      "op": "roundtrip",
+      "count": 100,
+      "concurrency": 1,
+      "payload_bytes": 1024,
+      "duration_seconds": 0,
+      "mode": "plugin"
+    }
+  },
+  {
+    "provider": "kms-v2",
+    "mode": "e2e",
+    "trials": 3,
+    "failed_trials": 0,
+    "errors": 0,
+    "requests": 300,
+    "mean_roundtrips_per_second": 118.17860954368334,
+    "stdev_roundtrips_per_second": 2.7399431156819203,
+    "mean_trial_p95_ms": 10.753747333333333,
+    "mean_trial_p99_ms": 12.015952333333333,
+    "image_digest": "docker.io/library/kms-bench@sha256:e125cde53115d74a73e6d55610658c395d65d633390e9f1094037c5cad52c8e9",
+    "spec": {
+      "scenario": "basic",
+      "op": "roundtrip",
+      "count": 100,
+      "concurrency": 1,
+      "payload_bytes": 1024,
+      "duration_seconds": 0,
+      "mode": "e2e"
+    }
+  }
+]

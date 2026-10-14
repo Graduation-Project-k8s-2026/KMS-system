@@ -1,0 +1,20 @@
+{
+  "before_key_id": "k8s-secrets:1",
+  "before_version": 1,
+  "snapshot_sha256": "b2555886458a78c57a35422462572ed981d1aaed0176e219ccbba2c5712263a9",
+  "stage": "complete",
+  "started_at": "2026-10-11T16:12:12.108662+00:00",
+  "after_key_id": "k8s-secrets:2",
+  "previous_kek_retained": true,
+  "previous_plugin_ciphertext_read": true,
+  "previous_secret_read": true,
+  "envelope_after": {
+    "key_id_counts": {
+      "k8s-secrets:1": 1,
+      "k8s-secrets:2": 1
+    },
+    "secret_count": 2,
+    "status": "PASS"
+  },
+  "completed_at": "2026-10-11T16:12:21.634216+00:00"
+}

@@ -41,3 +41,6 @@ CLAUDE.md
 
 # Python verifier bytecode
 __pycache__/
+
+# Encrypted operator backup download links (never commit operational backups)
+/.backup-download/

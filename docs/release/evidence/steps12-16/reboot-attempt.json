@@ -1,0 +1,7 @@
+{
+  "checked_at_utc": "2026-10-12T00:49:03.372026+00:00",
+  "status": "NOT_VERIFIED",
+  "reason": "Boot ID unchanged and expected unseal timing file absent after user-reported reboot. Awaiting terminal host identification.",
+  "observed_boot_id": "fdaaa659-e186-4509-be55-2192356a474e",
+  "unseal_timing_file_present": false
+}

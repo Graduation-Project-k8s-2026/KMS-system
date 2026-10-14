@@ -138,3 +138,36 @@ func TestDecryptFixedVector(t *testing.T) {
 		t.Fatal("tampered vector accepted")
 	}
 }
+
+// Sequential observations across rotations must never reuse an older key ID;
+// restored state must retain both the latest ID and every prior decrypt version.
+func TestKeyIDMonotonicAndUnknownVersion(t *testing.T) {
+	b := barrier.NewBarrier(storage.NewMemoryStorage(), seal.NewDevSeal("id-fixture"))
+	if err := b.Unseal(); err != nil {
+		t.Fatal(err)
+	}
+	km := keys.NewKeyManager(b)
+	if _, err := km.CreateKey("k8s-secrets", 0); err != nil {
+		t.Fatal(err)
+	}
+	svc := kmsv2.New(km, "k8s-secrets")
+	ctx := context.Background()
+	seen := map[string]bool{}
+	for i := 0; i < 20; i++ {
+		s, err := svc.Status(ctx, &pb.StatusRequest{})
+		if err != nil || seen[s.KeyId] {
+			t.Fatal("key ID reused or unavailable")
+		}
+		seen[s.KeyId] = true
+		e, err := svc.Encrypt(ctx, &pb.EncryptRequest{Uid: "id-test", Plaintext: []byte("public")})
+		if err != nil || e.KeyId != s.KeyId {
+			t.Fatal("Status/Encrypt key selection differs")
+		}
+		if _, err = svc.Decrypt(ctx, &pb.DecryptRequest{Uid: "unknown", KeyId: "k8s-secrets:99999", Ciphertext: e.Ciphertext}); status.Code(err) != codes.FailedPrecondition {
+			t.Fatal("unknown version accepted")
+		}
+		if _, err = km.RotateKey("k8s-secrets"); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

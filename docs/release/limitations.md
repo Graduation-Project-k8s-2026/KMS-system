@@ -1,16 +1,16 @@
-# 완료 범위와 남은 제약
+# 범위와 남은 제약
 
-현재 결과는 5.2.2 구현 및 5.2.3–5.2.5 설정·데이터·검증 계약의 로컬 보완/시험이다. [최신 준비 판단](contract-readiness.md)을 함께 읽는다. 이미지·클러스터·운영 암호화의 최종 제출 완료로 표시하지 않는다.
+최신 실행 상태는 [verification.md](verification.md), 실제 이미지·버전은 [release-lock.json](release-lock.json)이다. §12의 실제 apiserver 연결·전체 현재 Secret 암호화·identity 제거·KEK 회전은 완료했다. 과거 문서의 “KMS 연결 미실행”은 최초 §5.2 작업 당시의 이력이다.
 
-- 현재 소스는 기준 SHA `34a37352b64c9028c431d523941c517f165feb67` 위의 **미커밋 작업 트리**다. 새 릴리스 SHA와 제품 image digest는 아직 없다. 공식 이미지 메타데이터 고정과 로컬 ARM64 ELF 빌드를 이미지 빌드라고 부르지 않는다.
-- Tailscale CLI/서비스는 이 호스트 조사에서 사용할 수 없었다. 기존 사설 HTTPS 설계를 보존했으며 설치/로그인/Serve/Funnel/정책 변경은 하지 않았다. 실제 헤더 처리·외부 접속 차단·MFA·기기 회수는 미검증이다.
-- Kubernetes Job/RBAC/TokenReview는 fake client로 정상/거부/실패 경로를 시험했다. 실제 SA 최소권한, Pod UID extras, projected token 갱신, Plugin hostPath 접근, Job scheduling/deletion은 배포 뒤 시험해야 한다.
-- 세 모드의 제품 Job은 basic/roundtrip만 제공한다. API 호출 수가 아닌 왕복 작업 수를 `requests`로 집계한다. 세 모드 지연은 다른 계층의 왕복 시간이며 서로 같은 암호 연산의 비용으로 해석하면 안 된다. 서버 버전은 관리자 고정 provenance이며 attestation이 아니다.
-- 운영 PVC/Prometheus TSDB는 템플릿과 실제 query/query_range client를 준비했다. 실제 target up, PVC 바인딩과 재시작 후 역사 데이터, 디스크 quota는 미검증이다. local PV 용량 선언은 quota가 아니다.
-- 감사는 프로세스/디스크 실패 전에 확정된 사건만 보장한다. 요청 intent 후 crash는 완료 여부 불명으로 남을 수 있다. 감사 완료 실패 시 API 503이어도 작업이 commit됐을 수 있다. init 응답 유실 시 share 재발급은 없다.
-- ENOSPC/EROFS는 syscall 오류 주입으로 시험했다. 실제 운영 볼륨을 채우거나 read-only로 바꾸지 않았다. 실제 SIGKILL과 별도 디렉터리 복원은 임시 테스트 저장소에서 수행했다.
-- 구형 metadata 없는 키 저장소는 migration-required로 거부한다. 기존 Root/share를 검증하여 변환하는 운영 migration 도구는 이번 범위에서 제공하지 않는다. 데이터를 지워 해결하지 않는다.
-- TLS/SA 공개키/SAR 인증서는 시작 시 로드한다. 변경에는 계획된 재시작/수동 unseal이 필요하다. hot reload/CRL/OCSP/개별 Transit JWT 즉시 회수는 제공하지 않는다. Transit 회수 지연은 토큰 수명과 SAR 캐시에 의존한다.
-- 운영 apiserver v2 연결, 전체 Secret 재쓰기/실제 raw etcd prefix, identity 제거, 전체 호스트 재부팅, etcd snapshot 복원 및 외부 백업은 실행하지 않았다. 이 단계의 manifest 멱등 병합 도구도 실제 원본을 기준으로 이후에 구현해야 한다.
-- `govulncheck v1.8.0`: 마지막 검사에서 호출 가능한 취약점 0건. 요구 모듈 `golang.org/x/crypto`의 사용하지 않는 `openpgp` 경고 GO-2026-5932는 남는다. openpgp import/call이 없다는 도달성 결과이며 해당 모듈 전체가 무취약하다는 뜻은 아니다.
-- 단일 노드/Boot Volume, 호스트 관리자 신뢰, RAM 내 Root/KEK, 수동 Shamir unseal의 가용성 한계는 그대로다. HA, 멀티테넌트 격리, 하드웨어 Root 보호를 주장하지 않는다.
+- 사용자 지시로 §10의 데모 앱·추가 시나리오는 보류했고 §18은 작업 지시로 사용하지 않았다. 앱이 실제 배포·시연된 것으로 표시하지 않는다.
+- 단일 노드와 하나의 Boot Volume이다. local PV/PVC는 HA·디스크 장애 격리가 아니다. Flannel 배치만으로 NetworkPolicy 강제를 주장하지 않는다.
+- 호스트 root·커널·메모리 접근 권한은 신뢰 경계 안이다. Root/KEK는 unsealed 프로세스 RAM에 있으며 Go의 완전한 메모리 소거를 보장하지 않는다.
+- Shamir는 기존 share를 가진 사람의 개입이 필요하다. 한 사람이 모든 share를 보관하면 다인 통제가 아니다. 무인 재부팅 복구를 주장하지 않는다.
+- Plugin Job은 강한 KMS UDS 권한을 가진 시험이다. Transit/E2E와 같은 권한으로 간주하지 않는다. 모든 사람에게 hostPath/hostNetwork Pod 생성 권한을 제공하지 않는다.
+- 실제 tailnet 외부/비승인 기기 접속·IPv6 차단·MFA·기기 회수는 사람이 접근 가능한 해당 기기에서 추가 검증해야 한다. 호스트 loopback admin 시험은 사람 로그인 시험이 아니다.
+- TLS/SA 공개키/SAR 인증서는 시작 시 로드한다. 교체에는 계획된 재시작·기존 share 입력이 필요하다. 개별 Transit JWT 즉시 회수·CRL/OCSP·hot reload를 주장하지 않는다. SAR 캐시/토큰 수명에 따른 지연이 있다.
+- 현재 etcd Secret 전체가 KMS v2여도 과거 revision·기존 snapshot에 평문이 남을 수 있다. compaction/defrag/보존 정책과 외부 백업 삭제는 별도다. 이전 KEK를 삭제하지 않는다.
+- 이번 성능 측정은 3회·100왕복·동시성1·1024 bytes의 단일 노드 실험이다. 서비스 공유·운영 조회 간섭이 있으며 일반 환경의 성능 우열로 확장하지 않는다.
+- K8sSeal 측정은 fake client, TPM은 CGO simulator다. 별도 실제 클러스터·실물 TPM의 보안성/지연을 측정한 것이 아니다. 같은 클러스터 Secret을 Root 저장소로 쓰는 순환 의존은 사용하지 않는다.
+- 외부 백업은 암호화 파일을 별도 장치로 옮기고 목적지 hash를 확인해야 완료다. 같은 인스턴스의 `/var/backups` 파일은 외부 백업이 아니다. 이번 최종 묶음은 운영자의 PC 반출·별도 복구 암호 보관·목적지 SHA256 일치 확인을 받았다. 백업 이후의 재부팅 감사 기록과 추가 Transit smoke 결과는 해당 snapshot의 RPO 범위 밖이다.
+- 현재 소스는 미커밋 작업 트리다. 기존 사용자 `cmd/bench/release.go` 변경을 유지했으며 배포된 bench image의 source provenance와 현재 호스트 도구 소스를 혼동하지 않는다.

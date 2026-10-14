@@ -1,0 +1,13 @@
+{
+  "status": "PASS",
+  "scheduled_at_utc": "2026-10-12T00:51:44.774014+00:00",
+  "systemd_timer": "kms-release-reboot-20261012.timer",
+  "before_boot_id": "fdaaa659-e186-4509-be55-2192356a474e",
+  "state": "/home/ubuntu/kms-lab/reboot-20261012-actual-state.json",
+  "unseal_timing": "/home/ubuntu/kms-lab/reboot-20261012-unseal.json",
+  "next_command": "sudo python3 scripts/verify-reboot.py check --state /home/ubuntu/kms-lab/reboot-20261012-actual-state.json --unseal-timing /home/ubuntu/kms-lab/reboot-20261012-unseal.json --evidence docs/release/evidence/steps12-16/reboot.json",
+  "external_backup_checksum_verified": true,
+  "after_boot_id": "8cc20703-c20a-4a53-bdde-76b82bd04bae",
+  "verified_at_utc": "2026-10-12T00:58:11.049548+00:00",
+  "evidence": "reboot.json"
+}

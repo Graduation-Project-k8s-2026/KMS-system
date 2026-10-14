@@ -39,6 +39,7 @@ var newE2EClient = func() (kubernetes.Interface, error) {
 		return nil, e
 	}
 	cfg.Timeout = 10 * time.Second
+	cfg.QPS = -1
 	return kubernetes.NewForConfig(cfg)
 }
 

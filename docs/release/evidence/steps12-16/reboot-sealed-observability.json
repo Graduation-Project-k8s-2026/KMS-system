@@ -1,0 +1,27 @@
+{
+  "recorded_at_utc": "2026-10-12T00:57:08.949660+00:00",
+  "sealed": true,
+  "kms_seal_sealed": [
+    {
+      "timestamp": 1791766628.99,
+      "value": "1"
+    }
+  ],
+  "kms_seal_last_unsealed_timestamp_seconds": [
+    {
+      "timestamp": 1791766628.991,
+      "value": "0"
+    }
+  ],
+  "pre_reboot_history": [
+    {
+      "job": "kms",
+      "value": "1"
+    },
+    {
+      "job": "kube-apiserver",
+      "value": "1"
+    }
+  ],
+  "apiserver_readyz_success": false
+}

@@ -1,57 +1,50 @@
-# 로컬 검증 실행 기록
+# §12–16 실제 검증 결과
 
-아래는 최초 G1–G10 구현 시 기록이다. 이후 계약 보완 및 캐시 없는 전체 재검증 결과는 [§5.2.3–§5.2.5 재검토](contract-readiness.md)가 최신이며, 최신 증거는 `evidence/contracts/`에 있다.
+실행일 2026-10-12 KST (기계 증거는 UTC). 기준 HEAD `a41b11ad11ae41df4400b622e9e1a0c5a5ac097f`, 실제 linux/arm64 단일 노드, Kubernetes 1.35.9·etcd 3.6.6·Go 1.26.9. 현재 소스 수정은 미커밋이며 새 릴리스 SHA로 주장하지 않는다. 최초 로컬 구현의 기록은 [이력](verification-local-history.md)에 보존했다.
 
-실행일: 2026-10-11 UTC. 기준 HEAD `34a37352b64c9028c431d523941c517f165feb67`, branch `infra/oci-single-node`. 현재 변경은 미커밋이며 릴리스 SHA가 아니다. 테스트한 소스 파일 목록/해시는 [source-manifest.sha256](evidence/source-manifest.sha256), 기준 상태는 [baseline](baseline.md)에 있다.
+`PASS`는 해당 증거 범위만 뜻한다. `PARTIAL`은 일부 실제 시나리오가 미검증이고, `DEFERRED`는 사용자 보류 범위다. 전체 제출 gate를 일괄 PASS로 채우지 않는다.
 
-호스트는 실제 linux/arm64다. `PATH=/home/ubuntu/kms-tools/go/bin:$PATH`의 공식 Go 1.26.9를 사용했다. 컨테이너를 실행하거나 클러스터에 적용하지 않았다. 테스트용 임시 디렉터리, loopback TLS/UDS, 가짜 Kubernetes client를 사용했다. 테스트 fixture 초기화는 운영 KMS 초기화와 구분한다.
-
-## 실제 실행 결과
-
-| 실행 명령/검사 | 최종 결과 | 범위와 증거 |
+| ID | 결과 | 이번 실행의 범위·증거 |
 |---|---|---|
-| `go vet ./...` | PASS | 종료 0, [vet.log](evidence/vet.log) |
-| `go test -race ./...` | PASS | 모든 package 성공 또는 no test files. 변경되지 않은 package의 Go 캐시 결과 포함. [race.log](evidence/race.log) |
-| `bash scripts/test-kmsv2.sh` | PASS | 공식 RPC/회전/재시작/고정 벡터, `-race -count=1`. [kmsv2.log](evidence/kmsv2.log) |
-| `go test -race ./cmd/server ./internal/jobs ./internal/kmsv2` | PASS | API 부재 실제 main 기동, 잘못된 run/저장 실패와 마지막 v2 시험. [last-tests.log](evidence/last-tests.log) |
-| `go test -race ./internal/adminapi -count=1` | PASS | 마지막 proxy 503·Prometheus range/오류 시험. 뒤 전체 race/계약 검사에도 포함 |
-| `go test -race ./internal/metrics -count=1` | PASS | 마지막 추가 시험: 실제 Prometheus gather에서 200/401/403/503/500 보존·집계, 고정 라벨 확인. [http-metrics.log](evidence/http-metrics.log) |
-| `bash scripts/verify-release-contract.sh` | PASS | 실제 7개 package의 handler/config/CLI 시험 `-count=1` + Python 5개 시험. [contract.log](evidence/contract.log) |
-| `python3 -m unittest discover -s scripts -p 'test_*.py'` | PASS (5 tests) | template 보안 경계/변수 이름, 미치환·중복·tag 거부, synthetic raw etcd prefix, mocked pagination/conflict/resume, fixture 완료·귀속·실패·timeout |
-| `bash -n scripts/create-bench-fixture.sh scripts/test-kmsv2.sh scripts/verify-release-contract.sh` | PASS | shell 구문 확인. 실제 tailnet Job fixture는 실행하지 않음 |
-| `CGO_ENABLED=1 go test -tags=tpm_lab ./internal/seal` | PASS | 격리 simulator 프로필. 물리 TPM 보증 아님. [tpm-lab.log](evidence/tpm-lab.log) |
-| `CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o /tmp/kms-local-bins/<name> ./cmd/<name>` (server/admin-api/bench/demo-app) | PASS | 4개 실제 ARM64 ELF. 마지막 proxy 변경 후 admin-api 재빌드. [arm64-file.log](evidence/arm64-file.log), [arm64-sha256.log](evidence/arm64-sha256.log) |
-| `go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 -show verbose ./...` | PASS, module 경고 1개 | 종료 0. 호출 가능 0, import package 0, 미사용 OpenPGP module 경고 1. 마지막 코드 수정 후 온라인 Go DB 조회. [govulncheck.log](evidence/govulncheck.log) |
-| `git diff --check` | PASS | 공백 오류 없음 |
-| control-plane manifest 4개 SHA256 재조회 | PASS (불변) | baseline 값과 동일. apiserver/etcd/control-manager/scheduler 내용을 변경하지 않음 |
+| T01 이미지 분리 | PASS | 실제 세 제품 이미지의 바이너리 하나씩·ARM64·UID10001 검사: [image-contents](evidence/steps12-16/image-contents.json), [release-lock](release-lock.json) |
+| T02 초기화 보호 | PASS (자동 시험) | 전체 race suite의 initialization/reinit/wrong-share. 운영에서는 기존 share만 사용, Init 없음 |
+| T03 내구성 | PASS (fault injection) | crash/ENOSPC/EROFS 자동 시험. 실제 운영 디스크를 채우거나 read-only로 바꾸지는 않음 |
+| T04 동시성 | PASS | [race.log](evidence/steps12-16/race.log), 실제 운영 v2 동시 decrypt 및 20회 keyID 단조성 시험 |
+| T05 Transit | PASS (실제 정상+자동 부정 시험) | TLS/JWT/SAR 비교 Job 6회 오류0, [재부팅 후 Transit 10왕복·결과 제출 오류0](evidence/steps12-16/post-reboot-transit.json), CA/SAN/401/403 단위 시험 |
+| T06 GUI 인가 | PASS (운영 경계+자동 시험) | [live-access](evidence/steps12-16/live-access.json): 실제 viewer 읽기200/쓰기403/회수403, 익명401·Host/CSRF403·미등록404. 가상 시험 viewer만 잠시 추가 후 원래 역할 파일 복원. 사람 tailnet 로그인과 구분 |
+| T07 네트워크 | PARTIAL | [재부팅 후 사설 HTTPS의 CA/SAN 검증·익명401](evidence/steps12-16/post-reboot-https.json). 승인/비승인 외부 기기의 IPv4/IPv6 검사는 미실행 |
+| T08 Prometheus | PASS | [cluster-health](evidence/steps12-16/cluster-health.json): KMS/API target up, 백업 정지 및 실제 호스트 재부팅 후 과거 시계열 조회 |
+| T09 Job 제어 | PASS (정상 실운영+부정 자동 시험) | 실제 18개 Job 생성·추적·완료. 취소/timeout/reconcile/임의 template 거부는 자동 시험 |
+| T10 결과 제출 | PASS | 실제 Job/SA/Pod 귀속·TLS ingest·PVC 결과 18개. [재부팅 후 기존 결과 23개 보존](evidence/steps12-16/reboot.json) 및 새 Transit 결과 제출 확인 |
+| T11 KMS v2 | PASS | 실제 공식 RPC/오류/재시작과 [rotation](evidence/steps12-16/rotation.json), [복원 RPC](evidence/steps12-16/restored-kms-rpc.json) |
+| T12 Secret 저장 | PASS | [identity 제거](evidence/steps12-16/identity-removed.json), [재쓰기 후 envelope](evidence/steps12-16/envelope-after-rewrite.json). 현재 2개 모두 keyID2, 전체 API 읽기 성공 |
+| T13 호스트 재부팅 | PASS | [실제 boot ID 변경·기존 share·과거 ciphertext·Secret 2개·벤치 결과 23개·감사 파일 4개 보존](evidence/steps12-16/reboot.json). 관리/Prometheus와 호스트 서비스 회복. 측정 상한 418.13초, 이 중 share 입력 17.69초 |
+| T14 백업·복원 | PASS (별도 경로 복원·PC 반출) | [정지 백업/hash](evidence/steps12-16/backup-summary.json), [복원한 etcd·API·KMS에서 이전 Secret 읽기](evidence/steps12-16/final-restored-control-plane.json). [암호 입력 없는 암호화 export·실제 복호화/hash](evidence/steps12-16/local-backup-export.json) 확인. [PC 다운로드·복구 암호 별도 보관은 사용자 확인](evidence/steps12-16/external-backup.json), 목적지 SHA256 일치도 사용자 확인 |
+| T15 데모 앱 | DEFERRED | 사용자 지시에 따라 §10의 시나리오·앱 배포를 이번 범위에서 완료 처리하지 않음 |
+| T16 관측 정직성 | PASS (자동 시험+실제 sealed) | sealed/401/403/5xx와 N/A 처리 tests, 실제 Job 오류·성공 구분. [실제 재부팅 후 sealed=1, API readyz 실패, 과거 시계열 보존 확인](evidence/steps12-16/reboot-sealed-observability.json) |
+| T17 회수 | PARTIAL | 역할/토큰/인증서 만료·교체 자동 시험. 실제 tailnet 기기 회수·모든 운영 자격증명 교체는 미검증. [Transit/ingest 인증서](evidence/steps12-16/certificate-expiry.json)와 [Kubernetes 인증서](evidence/steps12-16/kubernetes-certificate-expiry.json) 만료 점검 완료 |
+| T18 성능 | PASS (명시 조건) | [18개 trial·요약](benchmark/README.md), [차트](benchmark/throughput.svg), 동일 Spec/image, 오류0. fake K8sSeal/TPM simulator 한계 별도 표기 |
 
-PASS는 그 명령이 확인한 범위만 뜻한다. fake Kubernetes client는 admission/RBAC/token 실제 발급·폐기를 수행하지 않는다. `cmd/demo-app` 자체는 no test files이고 앱 동작 시험은 `internal/demo`에 있다. `tpm_lab`은 기본 suite에서 제외되지만 별도로 실제 실행했다.
+## 실제 변경·실패 복구
 
-## 실패를 수정한 내역
+- 기존 apiserver command/인증서/etcd 설정을 보존하고 encryption config와 소켓 mount만 병합했다. 원본은 감시 디렉터리 밖의 최초 backup에 보관했다.
+- 최초 재쓰기 대상은 0개였다. 새 공개 proof Secret 생성 후 raw 암호화를 검증했고, 회전 시험으로 2개가 된 현재 Secret 전체를 다시 썼다. 과거 revision의 평문 소거를 주장하지 않는다.
+- 실제 rewrite에서 SecretList item의 `apiVersion/kind` 생략을 발견했다. TypeMeta를 보완하고 실제 2개 재쓰기와 회귀 시험을 통과했다.
+- 격리 복원 KMS의 최초 시작은 TLS 파일 경로/소유권 복원 차이로 실패했다. 원래 mount 경로와 numeric UID/GID를 복원하도록 수정한 뒤 실제 기동·기존 share·과거 ciphertext 복호화를 통과했다.
+- apiserver 설정 변경은 kubelet의 정지/재기동 대기 시간이 필요했다. API가 준비되기 전 rewrite 시도는 실패했고, readyz 정상 후 재시도했다. 실패한 상태에서 provider를 제거하거나 Secret을 삭제하지 않았다.
+- 격리 apiserver의 최소 capability를 실제 동작에 맞춰 NET_BIND_SERVICE(공식 실행 파일 capability)·DAC_OVERRIDE(UID10001/0600 KMS UDS에 대한 원래 root 접근)로 보완했다. 복원 경로만 mount하며 운영 socket/데이터는 mount하지 않았다. 최종 복원 API에서 이전 Secret 2개 읽기를 통과했다.
+- 자동 승인 검토가 환경변수 값 출력 명령을 개인키 노출 우려로 차단했다. 값 출력 대신 설정 이름·파일 존재 여부만 확인했다. 키/share/JWT/Secret 원문은 증거에 포함하지 않았다.
 
-- 최초 의존성 검사에서 gRPC/x/net의 호출 가능한 취약점이 발견되어 gRPC v1.83.2/x/net v0.60.0 및 관련 모듈을 갱신했다. 재검사에서 호출 가능 취약점 0건이다. GO-2026-5932 OpenPGP는 import/call하지 않지만 요구 모듈 경고가 남는다.
-- 보안 기본값/폐기된 benchmark route/업로드 실패 nonzero 계약과 맞지 않는 기존 시험은 새 요구에 맞춰 수정하고 재실행했다. 인증 off/fail-open 라이브러리 시험은 유지하되 production main은 해당 설정을 거부한다.
-- 최종 템플릿 감사에서 issuer 환경변수 이름에 잘못 들어간 치환식을 발견해 `KMS_SA_ISSUER`로 수정했다. 렌더링 시험은 실제 issuer 값과 authn/authz/auto-unseal/fail-open 계약까지 확인한다.
-- UDS 프록시 연결 실패의 기본 502를 rev2 backend 장애 계약에 맞춰 503으로 고치고 시험을 갱신했다.
-- 새 fixture 시험의 Python Request 메서드 검사 오류를 `get_method()`로 수정했다. 5개 Python 시험은 최종 모두 통과했다.
-- 작업 중 컴파일러가 파일을 읽는 시점의 일시적인 import 빌드 오류는 종료 후 재빌드로 해소되었다. 마지막 vet/race/ARM64 빌드는 성공했다.
+## 자동 회귀
 
-현재 마지막으로 실행한 검사에 남은 실패는 없다. 이는 아래 미실행 항목이 성공했다는 뜻이 아니다.
+- `go test -race ./... -count=1`: [로그](evidence/steps12-16/race.log)
+- `go vet ./...`: [로그](evidence/steps12-16/vet.log)
+- `python3 -m unittest discover -s scripts -p 'test_*.py'`: [로그](evidence/steps12-16/python.log)
+- `CGO_ENABLED=1 go run -tags=tpm_lab ./cmd/seal-lab --repeats 5`: [JSONL](benchmark/seal-lab.jsonl)
+- 공식 프로토콜 근거: [Kubernetes 1.35 KMS](https://v1-35.docs.kubernetes.io/docs/tasks/administer-cluster/kms-provider/), [EncryptedObject v0.35.9](https://github.com/kubernetes/apiserver/blob/v0.35.9/pkg/storage/value/encrypt/envelope/kmsv2/v2/api.proto), [etcd 3.6 recovery](https://etcd.io/docs/v3.6/op-guide/recovery/).
 
-## 실행하지 않은 항목
+## 최종 재부팅·외부 백업 확인
 
-- Dockerfile verify/final target의 **컨테이너 이미지 빌드**, 이미지 pull/import/push, 제품 digest 생성, CI 서비스 실행.
-- Kubernetes manifest apply/server-side dry-run, 실제 Job create/cancel/TokenReview, RBAC 최소권한·Plugin mount·E2E namespace 시험.
-- 실제 Tailscale Serve/MFA/device 회수/외부 방화벽·OCI NSG/Security List 시험. 이 호스트 조사에서 Tailscale CLI/활성 서비스를 확인할 수 없었고 OCI CLI도 없었다.
-- 운영 init/unseal, 실제 인증서·CA 교체/회수, 운영 projected JWT 갱신. 로컬 TLS 교체·만료와 역할/파일 토큰 회수만 시험했다.
-- 운영 PVC/Prometheus TSDB 재시작, 물리 disk-full/read-only/전원 차단, 외부 백업 및 etcd snapshot 복원.
-- kube-apiserver KMS 연결·원본 manifest 병합, 기존 Secret 재쓰기, **실제** raw etcd prefix 검증, identity 제거, 전체 호스트 재시작.
-- 실제 브라우저 자동화/NodePort 데모 시연. 단위 HTTP 시험과 ARM64 앱 바이너리 빌드만 실행했다.
+실제 재부팅 뒤 KMS는 sealed 상태로 정상 기동했고 API readiness는 실패했다. 기존 share 입력 후 KMS provider가 먼저 정상화됐으며 informer 동기화 대기 후 전체 readyz가 회복됐다. 초기 준비부터 최종 검증까지 418.13초이며 share 입력 17.69초를 차감하면 400.44초다. 예약 대기·운영자 재접속·검증 지연을 포함한 상한값으로, 순수 서버 시작 시간이나 전체 사람 대기를 제외한 값으로 해석하지 않는다.
 
-## 버전·릴리스 근거
-
-선택: Go 1.26.9, 실제 cluster v1.35.9와 Kubernetes 모듈 v0.35.9, gRPC v1.83.2, Prometheus 공식 LTS 3.13.4. 공식 image index/digest와 ARM64 manifest를 조회하여 [base-image-lock.json](base-image-lock.json)에 고정했다. 제품 이미지 digest와 release SHA는 [release-lock.json](release-lock.json)에서 `null`이다. runtime의 dated tag 조회 실패 후 bookworm-slim을 한 번 resolve하여 digest로 고정한 사실도 기록했다.
-
-확인한 공식 자료: [Go 릴리스 기록](https://go.dev/doc/devel/release), [Kubernetes patch/support 기록](https://kubernetes.io/releases/patch-releases/), [Prometheus 다운로드](https://prometheus.io/download/), [KMS provider v2](https://kubernetes.io/docs/tasks/administer-cluster/kms-provider/), [잔여 OpenPGP 모듈 경고](https://pkg.go.dev/vuln/GO-2026-5932).
-
-인증서/개인키/JWT/share/kubeconfig/운영 Secret data는 이 증거 디렉터리에 넣지 않았다. evidence에는 package 시험 결과·버전 검사·바이너리 및 소스 해시만 포함한다.
+최종 암호화 백업은 생성 후 실제 복호화로 15개 파일을 대조했고, 운영자가 PC 다운로드·복구 암호 별도 보관·목적지 SHA256 일치를 확인했다. 공유용 제출 묶음에는 이 운영 백업과 복구 암호를 포함하지 않는다. T07/T17의 실제 외부 기기·운영 자격증명 교체 시연은 여전히 PARTIAL이고 T15는 사용자 보류다.

@@ -91,3 +91,32 @@ TLS 서버 인증서/SA 검증 공개키/SAR client 인증서는 시작 시 로�
 필수 스크립트 exit: verify-release-contract/test-kmsv2는 실패 nonzero, renderer는 잘못된 입력 2, fixture/etcd/rewrite 처리 실패 1(잘못된 CLI 사용은 argparse의 2). rewrite-secrets는 기본 dry-run이며 `--execute --backup-id ... --resume ...`를 나중에만 사용한다. 실제 Secret/apiserver 변경은 이번 작업에서 실행하지 않았다. encryption-config 템플릿의 identity는 최초 전환용이며 raw 전체 Secret 검증 뒤 제거하는 단계가 별도로 남는다. 암호문이 남은 상태에서 KMS만 제거하는 롤백은 금지한다.
 
 2026-10-11 §5.2.3–§5.2.5 재검토: [충족 여부와 빌드 준비 판단](contract-readiness.md). Job GET/DELETE의 잘못된 ID 400·없는 run 404·상태 충돌 409·backend 장애 503을 구분한다. Ingest는 없는 run을 403으로 숨기되 저장소 장애는 503이다. CLI `--mode=... --help`는 0, 불필요한 위치 인자와 비16진수 run ID는 실패한다. 검증 shell 스크립트 `--help`는 0, 알 수 없는 인자는 2다.
+
+## §12–16 호스트 도구 (2026-10-12 KST 추가)
+
+제품 이미지에 새 실행 파일을 합치지 않았다. `cmd/kms-verify`는 호스트 검증 도구, `cmd/seal-lab`은 `tpm_lab`/CGO 전용 격리 실험 도구다. 현재 실행 명령·권한·적용 순서는 [deployment/README.md](deployment/README.md)에 있다.
+
+| 도구 | 계약 |
+|---|---|
+| `kms-verify --socket PATH [--save FILE] [--read FILE] [--require-key-change]` | 공식 v2 RPC·오류·크기·deadline·취소·동시 호출. save는 새 공개 시험 ciphertext 파일만, 기존 파일 덮어쓰기 금지 |
+| `kms-verify --etcd-stdin` | etcd JSON을 메모리로 읽고 EncryptedObject protobuf의 실제 keyID별 개수만 출력. 원문/전체 ciphertext 출력 없음 |
+| `patch-apiserver-kms.py` | strict YAML, 기존 command/volume 보존, 후보·원본 hash, 다른 provider/충돌 거부, root UID/GID socket connect, backup hash와 RPC gate, atomic apply |
+| `backup-kms.py prepare/resume/status --directory DIR` | Job drain·scale0·CRI 종료 확인·snapshot·KMS seal/정지·모든 데이터/설정/이미지 복사. 실패 시 state/held 보존. unseal은 사람 |
+| `host-unseal.py [--socket PATH]` | 기존 초기화 상태만 허용, TTY 숨김 입력, share를 CLI/파일/로그로 받지 않음 |
+| `rewrite-secrets.py` | 기본 dry-run, execute는 backup ID 필요. pagination/resourceVersion/conflict 재시도/checkpoint. raw list에 없는 Secret TypeMeta 보완 |
+| `migrate-secrets.py verify/finalize` | API 전체 Secret 이름 집합=raw etcd 집합, 모든 prefix 확인. finalize는 새 snapshot 후 identity 제거·apiserver 재시작 |
+| `rotate-kms-v2.py` | 현재 KEK가 백업에 포함돼야 진행. 의도 기록 후 한 번 회전, 재실행은 같은 버전으로 재개. 이전 데이터와 새 envelope keyID 확인 |
+| `restore-kms.py` | 신규 전용 경로에만 추출, archive traversal/link 거부, numeric UID/GID 복원, matching etcdutl, revision bump/mark-compacted, network=none KMS |
+| `restore-control-plane.py` | 복원한 etcd/API/KMS만 사용. etcd12379/API16443 loopback, 운영 데이터 경로 거부, 시험 컨테이너 종료 후 파일 보존 |
+| `benchmark-release.py` | host-admin loopback, 실제 provider와 라벨 대조, 같은 고정 Spec·반복, Job/SA/Pod-bound 결과와 실패 보존 |
+| `collect-release.py` | allowlist 기반 image manifest/config digest·version·상태만 수집. env/credentials/Secret 덤프 없음 |
+| `verify-reboot.py prepare/check` | boot ID가 실제 변경되어야 통과. 기존 ciphertext·Secret·결과 파일 검증. reboot 자체는 실행하지 않음 |
+| `export-backup.sh` | TTY에서 GPG AES256 대칭 암호화, 완료된 checksum 검증 백업만. 외부 전송·목적지 checksum은 별도 확인 |
+
+`seal-lab --repeats 5` 결과의 k8s는 fake client, tpm은 simulator다. 실물 TPM·별도 실제 클러스터 시험과 구분한다. 동일 클러스터의 Secret에 KMS Root를 넣는 순환 의존은 운영에서 사용하지 않는다.
+
+### 암호 입력 없는 로컬 반출
+
+`sudo python3 scripts/export-backup-auto.py`는 완성된 최종 백업의 checksum을 검증하고 `.backup-download/kms-final-v2-auto.tar.gpg`를 생성한다. 무작위 복구 암호는 저장소 밖 `/home/ubuntu/.kms-backup-keys/`에0600으로 보관한다. 실제 복호화·내용 hash 검증 후에만 성공을 기록하며 기존 출력/암호 파일은 덮어쓰지 않는다. 도중 실패한 partial/암호 파일은 조사·재개 판단을 위해 유지한다. 암호 원문은 stdout/증거에 출력하지 않는다. 외부 반출 완료 여부는 별도다.
+
+`host-unseal.py --timing-file <path>`는 성공 시 boot ID·시작/종료 시각·소요 시간만0600 파일에 기록한다. share는 기록하지 않는다. `verify-reboot.py check --unseal-timing <path>`는 같은 boot ID의 성공 기록만 받아 수동 입력 시간 포함/차감 상한값을 보고한다. 재접속 및 증거 수집 지연은 순수 복구 시간과 구분한다.

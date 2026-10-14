@@ -18,6 +18,8 @@ def items(path):
   continuation=doc.get('metadata',{}).get('continue','')
   if not continuation:break
 def replace(secret,backup):
+ # Raw SecretList items omit TypeMeta; kubectl replace requires both fields.
+ secret['apiVersion']='v1';secret['kind']='Secret'
  meta=secret['metadata'];ns,name=meta['namespace'],meta['name']
  for attempt in range(5):
   meta=secret['metadata'];meta.setdefault('annotations',{})['kms.local/rewrite-batch']=backup

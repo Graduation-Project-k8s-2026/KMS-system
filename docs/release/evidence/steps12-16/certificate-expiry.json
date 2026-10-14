@@ -1,0 +1,31 @@
+{
+  "recorded_at_utc": "2026-10-12T00:44:16.958367+00:00",
+  "certificates": [
+    {
+      "path": "/etc/custom-kms/ingest-tls/tls.crt",
+      "dates": [
+        "notBefore=Oct 11 05:02:48 2026 GMT",
+        "notAfter=Jan  9 05:02:48 2027 GMT"
+      ],
+      "valid_for_next_30_days": true
+    },
+    {
+      "path": "/etc/custom-kms/transit-ca.crt",
+      "dates": [
+        "notBefore=Oct 11 05:02:03 2026 GMT",
+        "notAfter=Oct 10 05:02:03 2028 GMT"
+      ],
+      "valid_for_next_30_days": true
+    },
+    {
+      "path": "/etc/custom-kms/transit-tls/tls.crt",
+      "dates": [
+        "notBefore=Oct 11 05:02:48 2026 GMT",
+        "notAfter=Jan  9 05:02:48 2027 GMT"
+      ],
+      "valid_for_next_30_days": true
+    }
+  ],
+  "renewal_performed": false,
+  "scope": "expiration only; no private key contents or identities emitted"
+}

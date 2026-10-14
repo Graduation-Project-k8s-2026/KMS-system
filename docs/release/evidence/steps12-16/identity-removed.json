@@ -1,0 +1,26 @@
+{
+  "status": "PASS",
+  "api_read_count": 1,
+  "raw_encrypted_count": 1,
+  "etcd_revision": 117591,
+  "provider": "custom-kms",
+  "historical_plaintext_erased": false,
+  "snapshot_sha256": "4b733d534796f4947631c88bdff9475df4ffd0f78512cab742e52c2610f48711",
+  "before": {
+    "status": "PASS",
+    "api_read_count": 1,
+    "raw_encrypted_count": 1,
+    "etcd_revision": 117591,
+    "provider": "custom-kms",
+    "historical_plaintext_erased": false
+  },
+  "after": {
+    "status": "PASS",
+    "api_read_count": 1,
+    "raw_encrypted_count": 1,
+    "etcd_revision": 117610,
+    "provider": "custom-kms",
+    "historical_plaintext_erased": false
+  },
+  "identity_removed": true
+}

@@ -1,0 +1,73 @@
+[
+  {
+    "backup_id": "pre-kms-v2-20261011T1610Z",
+    "complete": true,
+    "stage": "resumed",
+    "started_at": "2026-10-11T16:01:18.974121+00:00",
+    "bundle_copied_at": "2026-10-11T16:02:02.976189+00:00",
+    "recovered_at": "2026-10-11T16:07:39.106058+00:00",
+    "etcd_version": "3.6.6",
+    "kek_latest_version": 1,
+    "files": {
+      "images.tar": {
+        "sha256": "668c0be9dacc786d5674feee32e8efe1c93203b1f2129a237e5316a8ac733fe8",
+        "bytes": 272591872
+      },
+      "etcd-status.json": {
+        "sha256": "a5c5c80cd749449b80b11f9b15ebc6ea2f261e4981010237d79815794a47e17f",
+        "bytes": 111
+      },
+      "configuration-private.tar.gz": {
+        "sha256": "4010f7ec5f1a46bf4daff6dcc9679b9a538e51c26e6b4cdf62d7992ee73e5584",
+        "bytes": 39535
+      },
+      "etcd.db": {
+        "sha256": "8d9687bef4d67ce6805afdf018e42ea2ad75bbfccd4924bdaaf28972d0f34d85",
+        "bytes": 2289696
+      },
+      "kms-data.tar.gz": {
+        "sha256": "388bab349c2adbbc75b0c45c3d9cf10c635c909633abd0dd37a4d3797798c61f",
+        "bytes": 71790583
+      }
+    },
+    "external_transfer_verified": false
+  },
+  {
+    "backup_id": "final-kms-v2-20261011T1616Z",
+    "complete": true,
+    "stage": "resumed",
+    "started_at": "2026-10-11T16:15:49.908340+00:00",
+    "bundle_copied_at": "2026-10-11T16:16:33.797519+00:00",
+    "recovered_at": "2026-10-11T16:31:07.181903+00:00",
+    "etcd_version": "3.6.6",
+    "kek_latest_version": 2,
+    "files": {
+      "images.tar": {
+        "sha256": "ac76704b832eb130870ddb1fb3aef47e38e5fb56af76e4a32386b0e1b699af9c",
+        "bytes": 272591872
+      },
+      "etcd-status.json": {
+        "sha256": "968c2da0b4461cc0444f9fbecc2d0020211ea8a203ec318db5476c8e820ad439",
+        "bytes": 111
+      },
+      "configuration-private.tar.gz": {
+        "sha256": "15e659db3597396f2fd95a9b6d976002f68f9fe276ff0b3093564d568653980b",
+        "bytes": 39724
+      },
+      "release-lock.json": {
+        "sha256": "f29c6042d40449a1764e734145fb84d9e9440dcb3e9cfaeea499ffa4ddcf1a12",
+        "bytes": 2755
+      },
+      "etcd.db": {
+        "sha256": "b8534da53cd21fcae33c77cade9cb1320894565269ee791bd0c9bb1bc7681a89",
+        "bytes": 5488672
+      },
+      "kms-data.tar.gz": {
+        "sha256": "f5b33876889a30e6740ffcdfee091d3e997385b0aa85d03586c30917b588388b",
+        "bytes": 72522496
+      }
+    },
+    "external_transfer_verified": true,
+    "external_verification_evidence": "external-backup.json"
+  }
+]

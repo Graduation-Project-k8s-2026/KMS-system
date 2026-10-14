@@ -1,0 +1,1 @@
+{"cancellation":true,"concurrent_decrypt":16,"deadline":true,"key_id":"k8s-secrets:1","negative_inputs":true,"previous_fixture":true,"roundtrip":true,"size_limit":true,"status":"PASS","version":"v2"}

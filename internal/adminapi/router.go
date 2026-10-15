@@ -26,6 +26,10 @@ type Deps struct {
 	// nil이면 이 경로들을 등록하지 않는다.
 	Dashboard *dashboard.Service
 
+	// Info: GET /api/info에 보여 줄 배포 정보. RolesFile: GET /api/console-users가 읽는 역할 파일.
+	Info      Info
+	RolesFile string
+
 	// DefaultUI: "/"가 보낼 화면. "v1"이면 기존 /console, 그 외(빈 값 포함)는 새 화면 /v2/.
 	DefaultUI string
 }
@@ -44,6 +48,8 @@ func NewRouter(deps Deps) http.Handler {
 	for _, path := range []string{"/v1/sys/init", "/v1/sys/unseal", "/v1/sys/seal", "/v1/keys", "/v1/keys/", "/v1/keys/{name}/rotate", "/v1/keys/{name}/config"} {
 		r.Method("POST", path, proxy)
 	}
+	r.Get("/api/info", handleInfo(deps.Info, deps.AuditDir != ""))
+	r.Get("/api/console-users", handleConsoleUsers(deps.RolesFile))
 	if deps.AuditDir != "" {
 		r.Get("/api/audit", func(w http.ResponseWriter, req *http.Request) {
 			events, err := audit.ReadToday(deps.AuditDir)

@@ -8,12 +8,16 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"io"
 	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -83,5 +87,54 @@ func TestBodyLimitAndRotatedToken(t *testing.T) {
 	os.Remove(path)
 	if _, e := client.Get(srv.URL); e == nil {
 		t.Fatal("missing token accepted")
+	}
+}
+
+// 동시 요청이 많아도 keep-alive 연결이 재사용되어야 한다.
+// Go 기본값(MaxIdleConnsPerHost=2)이면 초과 연결이 매 요청 닫히고 TLS 핸드셰이크를 반복한다.
+func TestTLSClientReusesConnectionsUnderConcurrency(t *testing.T) {
+	const workers, perWorker = 16, 50
+	var newConns atomic.Int64
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("ok"))
+	}))
+	srv.Config.ConnState = func(_ net.Conn, s http.ConnState) {
+		if s == http.StateNew {
+			newConns.Add(1)
+		}
+	}
+	srv.StartTLS()
+	defer srv.Close()
+
+	p := filepath.Join(t.TempDir(), "ca.crt")
+	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw})
+	if e := os.WriteFile(p, pemBytes, 0600); e != nil {
+		t.Fatal(e)
+	}
+	client, e := TLSClient(p)
+	if e != nil {
+		t.Fatal(e)
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < perWorker; j++ {
+				resp, e := client.Get(srv.URL)
+				if e != nil {
+					t.Error(e)
+					return
+				}
+				io.Copy(io.Discard, resp.Body) // 본문을 끝까지 읽어야 연결이 풀로 돌아간다
+				resp.Body.Close()
+			}
+		}()
+	}
+	wg.Wait()
+
+	if got := newConns.Load(); got > workers*2 {
+		t.Fatalf("new connections = %d, want <= %d (connection reuse broken)", got, workers*2)
 	}
 }

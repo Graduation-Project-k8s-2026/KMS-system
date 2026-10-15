@@ -115,7 +115,7 @@ func (s *Security) Wrap(next http.Handler) http.Handler {
 			token := s.token(who)
 			http.SetCookie(w, &http.Cookie{Name: "kms-csrf", Value: token, Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode, Path: "/", MaxAge: 1800})
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]string{"role": role, "csrf_token": token})
+			json.NewEncoder(w).Encode(map[string]string{"role": role, "user": who, "csrf_token": token})
 			return
 		}
 		if r.Method != "GET" && r.Method != "HEAD" {

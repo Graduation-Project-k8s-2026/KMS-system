@@ -44,3 +44,10 @@ release 디렉터리를 만든 뒤 안전한 별도 Bash 빌드 블록을 다시
 넘어가지 않는다. Docker 캐시·기존 이미지·기존 데이터는 삭제하지 않는다.
 
 근거: [Docker build context / dockerignore 공식 설명](https://docs.docker.com/build/concepts/context/#dockerignore-files).
+
+## 사용자 포털(demo-app) 최초 배포
+
+서버에서 `scripts/deploy-user-portal.sh`를 실행한다(`--plan`은 서버 없이 파일만 만들어 검토, `--rollback`은 포털만 제거).
+순서: 사전 점검(KMS 봉인 해제·네임스페이스·app-a·CA·이미지) → Pod용 자체 서명 TLS Secret → 매니페스트 렌더링·검사 →
+적용 → 서버 안 동작 검증(암복호화 왕복, 잘못된 Host 403) → `tailscale serve --https=8443` 공개.
+관리 콘솔(443)·KMS 본체는 건드리지 않는다. 인증서·매니페스트는 `~/kms-lab/user-portal/`(0600)에 둔다.

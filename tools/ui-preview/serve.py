@@ -4,7 +4,9 @@
 기존 화면(/console, /dashboard)과 새 화면(/v2/)을 디스크의 실제 파일로 서빙하고,
 화면이 부르는 API는 가짜 JSON으로 응답한다(형식은 실제 Go 코드의 JSON과 같게 맞춤).
   /compare            왼쪽 기존 / 오른쪽 새 화면 나란히 비교
-  ?sealed=1 ?role=viewer  상태·역할 전환 (쿠키로 저장되어 화면의 API 호출에도 적용됨)
+  ?sealed=1 ?role=viewer  상태·역할 전환 (주소 쿼리가 화면의 모든 API 호출에 자동으로 붙음)
+  ?err=404            키/작업 API를 그 상태 코드로 실패시킴(오류 문구 확인)
+  주소에 sealed가 없으면 [봉인하기]·[조각 제출]이 서버 상태를 실제로 바꾼다(조각 3개면 해제)
 실행: python3 tools/ui-preview/serve.py --port 8088
 """
 import argparse, json, math, mimetypes, re, time
@@ -39,12 +41,22 @@ def audit_events():  # internal/audit: utc, request_id, subject, action, allowed
              "subject": "admin@example.test" if i % 3 else "viewer@example.test", "action": acts[i % 5],
              "allowed": i % 7 != 0, "success": i % 7 != 0} for i in range(12)]
 
-def jobs():  # internal/jobs Run
-    def run(i, mode, state, upload):
-        return {"run_id": "r-2026101%d-%d" % (i, i), "spec": {"mode": mode, "scenario": "basic", "op": "roundtrip", "count": 100,
-                "concurrency": 1, "payload_bytes": 1024, "duration_seconds": 0}, "namespace": "kms-bench", "state": state,
-                "upload": upload, "created_at": (NOW - timedelta(hours=i * 5)).strftime("%Y-%m-%dT%H:%M:%SZ")}
-    return [run(1, "transit", "succeeded", "stored"), run(2, "plugin", "succeeded", "stored"), run(3, "e2e", "running", "pending")]
+JOBS = []  # (run_id, mode, concurrency, count, created_at, 끝나는 상태) — 시작 버튼으로 추가됨
+def _seed():
+    for i, (mode, st) in enumerate([("transit", "succeeded"), ("plugin", "succeeded"), ("e2e", "failed")], 1):
+        JOBS.append(("a%d%07x" % (i, i * 4099), mode, 1, 100, NOW - timedelta(hours=i * 5), st))
+_seed()
+
+def jobs():  # internal/jobs Run. 새로 시작한 실행은 2초 뒤 running, 8초 뒤 최종 상태로 바뀐다(3초 갱신 확인용)
+    out = []
+    for rid, mode, conc, count, created, final in JOBS:
+        age = (datetime.now(timezone.utc) - created).total_seconds()
+        state = "queued" if age < 2 else "running" if age < 8 else final
+        upload = "stored" if state == "succeeded" and age >= 9 else ("pending" if state in ("queued", "running", "succeeded") else "failed")
+        out.append({"run_id": rid, "spec": {"mode": mode, "scenario": "basic", "op": "roundtrip", "count": count, "concurrency": conc,
+                    "payload_bytes": 1024, "duration_seconds": 0}, "namespace": "kms-bench", "state": state, "upload": upload,
+                    "created_at": created.strftime("%Y-%m-%dT%H:%M:%SZ")})
+    return sorted(out, key=lambda r: r["created_at"], reverse=True)
 
 def bench_result(rid):  # internal/jobs Result
     return {"schema_version": 1, "run_id": rid, "mode": "transit", "requests": 100, "success": 98, "errors": 2,
@@ -93,6 +105,8 @@ const u=new URLSearchParams(location.search);
 if(u.get('page'))page.value=u.get('page');sealed.checked=u.get('sealed')==='1';if(u.get('role'))role.value=u.get('role');go();
 </script></html>"""
 
+GLOBAL = {"sealed": False, "progress": 0}
+
 INJECT = """<script>(function(){var q=location.search.slice(1);if(!q)return;var f=window.fetch;
 window.fetch=function(u,o){if(typeof u==='string'&&u.charAt(0)==='/'){u+=(u.indexOf('?')<0?'?':'&')+q;}return f.call(this,u,o);};})();</script>"""
 
@@ -102,7 +116,9 @@ class H(BaseHTTPRequestHandler):
     def state(self, q):
         # 상태는 쿼리(?sealed=1&role=viewer)에서만 읽는다. HTML에 주입된 스크립트(INJECT)가
         # 화면의 모든 API 호출에 페이지 주소의 쿼리를 붙여 주므로 쿠키가 필요 없다.
-        return q.get("sealed", ["0"])[0] == "1", ("viewer" if q.get("role", ["admin"])[0] == "viewer" else "admin")
+        # 주소에 sealed가 있으면 그 값, 없으면 [봉인하기]/[조각 제출]로 바뀐 서버 상태(GLOBAL)를 쓴다.
+        sealed = (q["sealed"][0] == "1") if "sealed" in q else GLOBAL["sealed"]
+        return sealed, ("viewer" if q.get("role", ["admin"])[0] == "viewer" else "admin")
 
     def send(self, code, body, ctype="application/json"):
         if not isinstance(body, bytes):
@@ -118,8 +134,16 @@ class H(BaseHTTPRequestHandler):
         html = re.sub(r"(<head[^>]*>|<!doctype html>|<!DOCTYPE html>)", lambda m: m[1] + INJECT, html, count=1) if "<head" in html.lower() or "doctype" in html.lower() else INJECT + html
         self.send(200, html, "text/html")
 
+    def fake_error(self, p, q):
+        # ?err=404 처럼 붙이면 키 API가 그 상태 코드로 실패한다(오류 문구 확인용)
+        code = int(q["err"][0]) if "err" in q and q["err"][0].isdigit() else 0
+        if code and (p.startswith("/v1/") or p.startswith("/api/jobs")):
+            self.send(code, {"error": "preview simulated error"}); return True
+        return False
+
     def do_GET(self):
         u = urlparse(self.path); p = u.path; q = parse_qs(u.query); sealed, role = self.state(q)
+        if self.fake_error(p, q): return
         if p == "/": return self.redirect("/compare")
         if p == "/compare": return self.send(200, COMPARE, "text/html")
         if p == "/console": return self.page(CONSOLE, q, sealed, role)
@@ -134,11 +158,8 @@ class H(BaseHTTPRequestHandler):
         if p == "/api/session": return self.send(200, {"role": role, "user": ("viewer@example.test" if role == "viewer" else "admin@example.test"), "csrf_token": "preview-token"})
         if p == "/v1/sys/seal-status":
             d = {"initialized": True, "migration_required": False, "sealed": sealed, "seal_type": "shamir"}
-            if sealed: d["progress"] = "1/3"
+            if sealed: d["progress"] = "%d/3" % GLOBAL["progress"]
             return self.send(200, d)
-        if p == "/v1/sys/seal-profile":
-            return self.send(200, {"Type": "shamir", "RequiresHumans": True, "HumanCount": 3, "SinglePointOfFailure": False,
-                                   "HardwareDependent": False, "AutoUnsealCapable": False, "Notes": "미리보기용 가짜 데이터"})
         if p in ("/v1/keys", "/v1/keys/"):
             return self.send(503, {"error": "sealed"}) if sealed else self.send(200, {"keys": sorted(KEYS)})
         m = re.fullmatch(r"/v1/keys/([^/]+)", p)
@@ -162,10 +183,16 @@ class H(BaseHTTPRequestHandler):
         try: body = json.loads(self.rfile.read(n) or b"{}")
         except ValueError: body = {}
         p = urlparse(self.path).path
+        if self.fake_error(p, parse_qs(urlparse(self.path).query)): return
         if role != "admin": return self.send(403, "admin required", "text/plain")
         if self.headers.get("X-CSRF-Token") != "preview-token": return self.send(403, "CSRF rejected", "text/plain")
-        if p == "/v1/sys/unseal": return self.send(200, {"sealed": sealed, "progress": "2/3"})
-        if p == "/v1/sys/seal": return self.send(200, {"sealed": True})
+        if p == "/v1/sys/unseal":
+            GLOBAL["progress"] += 1
+            if GLOBAL["progress"] >= 3: GLOBAL["sealed"], GLOBAL["progress"] = False, 0
+            return self.send(200, {"sealed": GLOBAL["sealed"], "progress": "%d/3" % GLOBAL["progress"]})
+        if p == "/v1/sys/seal":
+            GLOBAL["sealed"], GLOBAL["progress"] = True, 0
+            return self.send(200, {"sealed": True})
         if p in ("/v1/sys/init",): return self.send(409, {"error": "already initialized"})
         if p in ("/v1/keys", "/v1/keys/"):
             KEYS[body.get("name", "new-key")] = {"latest": 1, "min": 1, "auto": body.get("auto_rotate_period_sec", 0), "created": 0}
@@ -178,7 +205,9 @@ class H(BaseHTTPRequestHandler):
                 if "min_decryption_version" in body: k["min"] = body["min_decryption_version"]
                 if "auto_rotate_period_sec" in body: k["auto"] = body["auto_rotate_period_sec"]
             return self.send(200, key_meta(m[1]))
-        if p == "/api/jobs": return self.send(201, jobs()[0])
+        if p == "/api/jobs":
+            JOBS.append(("b%07x" % int(time.time()) , body.get("mode", "transit"), body.get("concurrency", 1), body.get("count", 100), datetime.now(timezone.utc), "succeeded"))
+            return self.send(201, jobs()[0])
         self.send(404, {"error": "not found"})
 
     def do_DELETE(self): self.send(204, b"")

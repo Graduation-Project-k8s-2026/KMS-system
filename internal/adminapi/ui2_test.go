@@ -91,7 +91,7 @@ func TestUI2_SessionReportsUser(t *testing.T) {
 }
 
 func TestHomeRedirect_FollowsDefaultUI(t *testing.T) {
-	for defaultUI, want := range map[string]string{"": "/console", "v1": "/console", "v2": "/v2/", "bogus": "/console"} {
+	for defaultUI, want := range map[string]string{"": "/v2/", "v1": "/console", "v2": "/v2/", "bogus": "/v2/"} {
 		h := newUI2Handler(t, defaultUI)
 		w := getAs(h, "/", "admin@example.test", "127.0.0.1:9", "kms.example.test")
 		if w.Code != 302 || w.Header().Get("Location") != want {

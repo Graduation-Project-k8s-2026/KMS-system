@@ -4,6 +4,7 @@
 기존 화면(/console, /dashboard)과 새 화면(/v2/)을 디스크의 실제 파일로 서빙하고,
 화면이 부르는 API는 가짜 JSON으로 응답한다(형식은 실제 Go 코드의 JSON과 같게 맞춤).
   /compare            왼쪽 기존 / 오른쪽 새 화면 나란히 비교
+  /portal             사용자 포털(demo-app). 키 demo는 정상, campus-shipping은 KMS가 403으로 답함(권한 없음 시연)
   ?sealed=1 ?role=viewer  상태·역할 전환 (주소 쿼리가 화면의 모든 API 호출에 자동으로 붙음)
   ?seal=tpm|k8s|dev    봉인 방식별 Seal 특성 표 확인
   ?err=404            키/작업 API를 그 상태 코드로 실패시킴(오류 문구 확인)
@@ -20,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[2]
 CONSOLE = ROOT / "internal/api/console/console.html"
 OPERATIONS = ROOT / "internal/adminapi/operations.html"
 UI2 = ROOT / "internal/adminapi/ui2"
+PORTAL = ROOT / "internal/demo/ui"  # 사용자 포털(demo-app)
 
 NOW = datetime.now(timezone.utc)
 def iso(days_ago): return (NOW - timedelta(days=days_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -151,7 +153,7 @@ class H(BaseHTTPRequestHandler):
     def fake_error(self, p, q):
         # ?err=404 처럼 붙이면 키 API가 그 상태 코드로 실패한다(오류 문구 확인용)
         code = int(q["err"][0]) if "err" in q and q["err"][0].isdigit() else 0
-        if code and (p.startswith("/v1/") or p.startswith("/api/jobs")):
+        if code and (p.startswith("/v1/") or p.startswith("/api/jobs") or p in ("/encrypt", "/decrypt", "/rewrap")):
             self.send(code, {"error": "preview simulated error"}); return True
         return False
 
@@ -160,6 +162,11 @@ class H(BaseHTTPRequestHandler):
         if self.fake_error(p, q): return
         if p == "/": return self.redirect("/compare")
         if p == "/compare": return self.send(200, COMPARE, "text/html")
+        if p == "/portal": return self.page(PORTAL / "index.html", q, sealed, role)
+        if p in ("/portal.css", "/portal.js"):
+            return self.send(200, (PORTAL / p[1:]).read_bytes(), "text/css" if p.endswith("css") else "text/javascript")
+        if p == "/api/config":  # demo-app이 주는 키 목록과 서비스 계정 표시 이름
+            return self.send(200, {"keys": ["demo", "campus-shipping"], "service_account": "kms-demo/app-a"})
         if p == "/console": return self.page(CONSOLE, q, sealed, role)
         if p == "/dashboard": return self.page(OPERATIONS, q, sealed, role)
         if p == "/v2": return self.redirect("/v2/" + ("?" + u.query if u.query else ""))
@@ -207,6 +214,7 @@ class H(BaseHTTPRequestHandler):
         except ValueError: body = {}
         p = urlparse(self.path).path
         if self.fake_error(p, parse_qs(urlparse(self.path).query)): return
+        if p in ("/encrypt", "/decrypt", "/rewrap"): return self.portal_op(p[1:], body)
         if role != "admin": return self.send(403, "admin required", "text/plain")
         if self.headers.get("X-CSRF-Token") != "preview-token": return self.send(403, "CSRF rejected", "text/plain")
         if p == "/v1/sys/unseal":
@@ -234,6 +242,20 @@ class H(BaseHTTPRequestHandler):
             JOBS.append(j)
             return self.send(201, job_json(j))
         self.send(404, {"error": "not found"})
+
+    def portal_op(self, op, body):
+        # 가짜 KMS: 암호문은 "kms:v{키의 최신 버전}:" + Base64(원문). 권한 판단은 KMS 몫이라 campus-shipping만 403.
+        key, val = body.get("key", ""), body.get("value", "")
+        if key not in ("demo", "campus-shipping"): return self.send(400, "key not allowed", "text/plain")
+        if key == "campus-shipping": return self.send(403, "Transit request failed", "text/plain")
+        import base64
+        ver = KEYS["demo"]["latest"]
+        if op == "encrypt":
+            return self.send(200, {"value": "kms:v%d:%s" % (ver, base64.b64encode(val.encode()).decode())})
+        m = re.fullmatch(r"kms:v(\d+):(.*)", val)
+        if not m: return self.send(503, "Transit request failed", "text/plain")
+        if op == "decrypt": return self.send(200, {"value": m[2]})
+        return self.send(200, {"value": "kms:v%d:%s" % (ver, m[2])})
 
     def do_DELETE(self): self.send(204, b"")
 

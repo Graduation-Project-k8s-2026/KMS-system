@@ -26,7 +26,7 @@ type Deps struct {
 	// nil이면 이 경로들을 등록하지 않는다.
 	Dashboard *dashboard.Service
 
-	// DefaultUI: "/"가 보낼 화면. "v2"면 /v2/, 그 외(빈 값 포함)는 기존 /console.
+	// DefaultUI: "/"가 보낼 화면. "v1"이면 기존 /console, 그 외(빈 값 포함)는 새 화면 /v2/.
 	DefaultUI string
 }
 
@@ -38,10 +38,10 @@ func NewRouter(deps Deps) http.Handler {
 	r.Get("/readyz", handleReadyz(deps.SocketPath))
 
 	proxy := NewSocketProxy(deps.SocketPath)
-	for _, path := range []string{"/v1/sys/seal-status", "/v1/keys/", "/v1/keys/{name}"} {
+	for _, path := range []string{"/v1/sys/seal-status", "/v1/keys", "/v1/keys/", "/v1/keys/{name}"} {
 		r.Method("GET", path, proxy)
 	}
-	for _, path := range []string{"/v1/sys/init", "/v1/sys/unseal", "/v1/sys/seal", "/v1/keys/", "/v1/keys/{name}/rotate", "/v1/keys/{name}/config"} {
+	for _, path := range []string{"/v1/sys/init", "/v1/sys/unseal", "/v1/sys/seal", "/v1/keys", "/v1/keys/", "/v1/keys/{name}/rotate", "/v1/keys/{name}/config"} {
 		r.Method("POST", path, proxy)
 	}
 	if deps.AuditDir != "" {
@@ -87,9 +87,9 @@ func handleConsole() http.HandlerFunc {
 }
 
 func handleHomeRedirect(defaultUI string) http.HandlerFunc {
-	target := "/console"
-	if defaultUI == UIDefaultV2 {
-		target = "/v2/"
+	target := "/v2/"
+	if defaultUI == UIDefaultV1 {
+		target = "/console"
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, target, http.StatusFound)

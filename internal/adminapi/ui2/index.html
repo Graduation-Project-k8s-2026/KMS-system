@@ -14,10 +14,9 @@
       <a href="#/dashboard" data-page="dashboard">대시보드</a>
       <a href="#/keys" data-page="keys">키</a>
       <a href="#/seal" data-page="seal">봉인</a>
-      <a href="#/ops" data-page="ops">작업(벤치)</a>
+      <a href="#/ops" data-page="ops">성능 시험</a>
       <a href="#/audit" data-page="audit">감사 로그</a>
     </nav>
-    <div class="side-foot"><a href="/console" id="legacy-link">← 이전 화면</a></div>
   </aside>
   <div class="main">
     <header class="topbar">
@@ -25,6 +24,8 @@
       <div class="top-right">
         <span id="seal-badge" class="pill pill-muted">확인 중…</span>
         <span id="who" class="who"></span>
+        <button id="role-toggle" class="btn ghost small" type="button" hidden></button>
+        <span id="role-note" class="role-note" hidden>화면 미리보기예요. 서버 권한은 그대로예요.</span>
       </div>
     </header>
     <main id="view" class="view"></main>

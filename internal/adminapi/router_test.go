@@ -41,11 +41,10 @@ func TestRouter_Console_ServesHTML(t *testing.T) {
 	}
 }
 
-// TestRouter_Root_RedirectsToConsole은 /가 /console로 안내하는지 확인한다 —
-// /dashboard, /portal이 아직 등록되지 않아 기존 3장 카드 홈페이지를 그대로
-// 쓰면 죽은 링크가 생기므로, 지금은 단순히 리다이렉트한다.
+// TestRouter_Root_RedirectsToConsole은 DefaultUI="v1"일 때 /가 /console로
+// 안내하는지 확인한다(기본값은 새 화면 /v2/ — ui2_test.go 참고).
 func TestRouter_Root_RedirectsToConsole(t *testing.T) {
-	router := adminapi.NewRouter(adminapi.Deps{SocketPath: filepath.Join(t.TempDir(), "unused.sock")})
+	router := adminapi.NewRouter(adminapi.Deps{SocketPath: filepath.Join(t.TempDir(), "unused.sock"), DefaultUI: "v1"})
 	srv := httptest.NewServer(router)
 	t.Cleanup(srv.Close)
 

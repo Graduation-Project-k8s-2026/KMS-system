@@ -87,3 +87,12 @@ table.kv th { width: 14rem; background: var(--soft); }
 .modal h2 { font-size: 1.25rem; }
 .modal-actions { display: flex; justify-content: flex-end; gap: .6rem; margin-top: 1.5rem; }
 @media (max-width: 900px) { .form-grid, .cards.three { grid-template-columns: 1fr; } }
+
+/* ---- 2차 수정 ---- */
+.role-note { font-size: .75rem; color: var(--muted); }
+.hint-small { font-size: .8rem; color: var(--muted); margin-top: .6rem; }
+.err-detail { font-size: .75rem; opacity: .85; }
+.run-status { display: inline-flex; align-items: center; gap: .5rem; color: var(--muted); }
+.spinner { width: 1rem; height: 1rem; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; display: inline-block; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.modal input[type=text] { width: 100%; margin-top: .25rem; }

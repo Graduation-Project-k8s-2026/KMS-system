@@ -88,7 +88,7 @@ func serve() error {
 		return fmt.Errorf("ingest must bind private node IP on 8202")
 	}
 	socket := getenvDefault("KMS_ADMIN_SOCKET", "/run/custom-kms/admin/admin.sock")
-	router := auth.Wrap(adminapi.NewRouter(adminapi.Deps{SocketPath: socket, Jobs: service, AuditDir: filepath.Join(os.Getenv("ADMIN_API_DATA_DIR"), "audit"), CoreAuditDir: os.Getenv("ADMIN_API_CORE_AUDIT_DIR"), PrometheusURL: os.Getenv("ADMIN_API_PROMETHEUS_URL"), DefaultUI: os.Getenv("ADMIN_API_UI_DEFAULT")}))
+	router := auth.Wrap(adminapi.NewRouter(adminapi.Deps{SocketPath: socket, Jobs: service, AuditDir: filepath.Join(os.Getenv("ADMIN_API_DATA_DIR"), "audit"), CoreAuditDir: os.Getenv("ADMIN_API_CORE_AUDIT_DIR"), PrometheusURL: os.Getenv("ADMIN_API_PROMETHEUS_URL"), DefaultUI: os.Getenv("ADMIN_API_UI_DEFAULT"), RolesFile: os.Getenv("ADMIN_API_ROLES_FILE"), Info: adminapi.Info{ServerVersion: os.Getenv("ADMIN_API_SERVER_VERSION"), SourceSHA: os.Getenv("ADMIN_API_SOURCE_SHA"), BenchImage: os.Getenv("ADMIN_API_BENCH_IMAGE"), AdminImage: os.Getenv("ADMIN_API_IMAGE")}}))
 	// Subjects come from the trusted loopback Serve boundary; bodies/headers are never logged.
 	router = auditLog.Middleware(auth.Subject, router)
 	srv := security.Server(addr, router)

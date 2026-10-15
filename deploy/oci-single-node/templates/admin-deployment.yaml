@@ -70,6 +70,8 @@ spec:
           value: ${SOURCE_SHA}
         - name: ADMIN_API_SERVER_VERSION
           value: ${SERVER_VERSION}
+        - name: ADMIN_API_IMAGE
+          value: ${ADMIN_IMAGE}
         - name: ADMIN_API_TRANSIT_URL
           value: https://kms-transit.kube-system.svc.cluster.local:8200
         - name: ADMIN_API_INGEST_URL

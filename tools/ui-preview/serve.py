@@ -4,7 +4,9 @@
 기존 화면(/console, /dashboard)과 새 화면(/v2/)을 디스크의 실제 파일로 서빙하고,
 화면이 부르는 API는 가짜 JSON으로 응답한다(형식은 실제 Go 코드의 JSON과 같게 맞춤).
   /compare            왼쪽 기존 / 오른쪽 새 화면 나란히 비교
+  /portal             사용자 포털(demo-app). 키 demo는 정상, campus-shipping은 KMS가 403으로 답함(권한 없음 시연)
   ?sealed=1 ?role=viewer  상태·역할 전환 (주소 쿼리가 화면의 모든 API 호출에 자동으로 붙음)
+  ?seal=tpm|k8s|dev    봉인 방식별 Seal 특성 표 확인
   ?err=404            키/작업 API를 그 상태 코드로 실패시킴(오류 문구 확인)
   주소에 sealed가 없으면 [봉인하기]·[조각 제출]이 서버 상태를 실제로 바꾼다(조각 3개면 해제)
 실행: python3 tools/ui-preview/serve.py --port 8088
@@ -19,49 +21,63 @@ ROOT = Path(__file__).resolve().parents[2]
 CONSOLE = ROOT / "internal/api/console/console.html"
 OPERATIONS = ROOT / "internal/adminapi/operations.html"
 UI2 = ROOT / "internal/adminapi/ui2"
+PORTAL = ROOT / "internal/demo/ui"  # 사용자 포털(demo-app)
 
 NOW = datetime.now(timezone.utc)
 def iso(days_ago): return (NOW - timedelta(days=days_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 # 키 메타: internal/keys/types.go의 KeyRingMeta (json 태그 없음 → 대문자 필드명)
 KEYS = {
-    "campus-shipping": {"latest": 3, "min": 3, "auto": 7776000, "created": 40},
-    "demo": {"latest": 2, "min": 1, "auto": 0, "created": 25},
-    "k8s-secrets": {"latest": 2, "min": 1, "auto": 2592000, "created": 12},
+    "campus-shipping": {"latest": 3, "min": 3, "auto": 7776000, "created": 40, "rotated": 3},
+    "demo": {"latest": 2, "min": 1, "auto": 0, "created": 150, "rotated": 120},   # 90일 넘음 → 주황 경고
+    "k8s-secrets": {"latest": 2, "min": 1, "auto": 2592000, "created": 60, "rotated": 45},
 }
 def key_meta(name):
     k = KEYS[name]
     return {"Name": name, "Type": "aes256-gcm96", "CreatedAt": iso(k["created"]), "LatestVersion": k["latest"],
-            "MinDecryptionVersion": k["min"], "AutoRotatePeriodSec": k["auto"], "LastRotatedAt": iso(3),
-            "Versions": [{"Version": v, "CreatedAt": iso(k["created"] - (v - 1) * 9)} for v in range(1, k["latest"] + 1)]}
+            "MinDecryptionVersion": k["min"], "AutoRotatePeriodSec": k["auto"], "LastRotatedAt": iso(k["rotated"]),
+            "Versions": [{"Version": v, "CreatedAt": iso(k["created"] - (k["created"] - k["rotated"]) * (v - 1) / max(1, k["latest"] - 1))} for v in range(1, k["latest"] + 1)]}
 
 def audit_events():  # internal/audit: utc, request_id, subject, action, allowed, success
-    acts = ["keys.rotate", "keys.config", "sys.seal-status", "keys.list", "keys.create"]
-    return [{"utc": (NOW - timedelta(minutes=7 * i)).strftime("%Y-%m-%dT%H:%M:%SZ"), "request_id": "req-%04d" % (900 - i),
-             "subject": "admin@example.test" if i % 3 else "viewer@example.test", "action": acts[i % 5],
-             "allowed": i % 7 != 0, "success": i % 7 != 0} for i in range(12)]
+    acts = ["GET /v1/keys", "POST /v1/keys", "POST /v1/sys/unseal", "GET /api/jobs", "POST /api/jobs", "GET /v1/sys/seal-status"]
+    out = []
+    for i in range(40):
+        bad = i % 9 == 4
+        out.append({"utc": (NOW - timedelta(minutes=6 * i)).strftime("%Y-%m-%dT%H:%M:%SZ"), "request_id": "req-%04d" % (900 - i),
+                    "subject": ["admin@example.test", "viewer@example.test", "ops@example.test"][i % 3],
+                    "action": acts[i % 6] + (" requested" if i % 2 else " completed"), "allowed": not (bad and i % 2), "success": not bad})
+    return out
 
-JOBS = []  # (run_id, mode, concurrency, count, created_at, 끝나는 상태) — 시작 버튼으로 추가됨
+JOBS = []  # 시작 버튼으로 추가됨. 새 실행은 2초 뒤 running, 6초 뒤 최종 상태(3초·2초 갱신 확인용)
 def _seed():
-    for i, (mode, st) in enumerate([("transit", "succeeded"), ("plugin", "succeeded"), ("e2e", "failed")], 1):
-        JOBS.append(("a%d%07x" % (i, i * 4099), mode, 1, 100, NOW - timedelta(hours=i * 5), st))
+    for i, (mode, st, c) in enumerate([("transit", "succeeded", 1), ("transit", "succeeded", 16), ("plugin", "succeeded", 4), ("e2e", "failed", 1)], 1):
+        JOBS.append({"id": "a%d%07x" % (i, i * 4099), "mode": mode, "conc": c, "count": 100 * i, "dur": 0, "payload": 1024,
+                     "created": NOW - timedelta(hours=i * 2), "final": st})
 _seed()
 
-def jobs():  # internal/jobs Run. 새로 시작한 실행은 2초 뒤 running, 8초 뒤 최종 상태로 바뀐다(3초 갱신 확인용)
-    out = []
-    for rid, mode, conc, count, created, final in JOBS:
-        age = (datetime.now(timezone.utc) - created).total_seconds()
-        state = "queued" if age < 2 else "running" if age < 8 else final
-        upload = "stored" if state == "succeeded" and age >= 9 else ("pending" if state in ("queued", "running", "succeeded") else "failed")
-        out.append({"run_id": rid, "spec": {"mode": mode, "scenario": "basic", "op": "roundtrip", "count": count, "concurrency": conc,
-                    "payload_bytes": 1024, "duration_seconds": 0}, "namespace": "kms-bench", "state": state, "upload": upload,
-                    "created_at": created.strftime("%Y-%m-%dT%H:%M:%SZ")})
-    return sorted(out, key=lambda r: r["created_at"], reverse=True)
+def _state(j):
+    age = (datetime.now(timezone.utc) - j["created"]).total_seconds()
+    state = "queued" if age < 2 else "running" if age < 6 else j["final"]
+    upload = "stored" if state == "succeeded" and age >= 7 else ("pending" if state in ("queued", "running", "succeeded") else "failed")
+    return state, upload
 
-def bench_result(rid):  # internal/jobs Result
-    return {"schema_version": 1, "run_id": rid, "mode": "transit", "requests": 100, "success": 98, "errors": 2,
-            "started_at": iso(0.2), "ended_at": (NOW - timedelta(days=0.2) + timedelta(seconds=4.3)).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "p50_seconds": 0.0042, "p95_seconds": 0.0091, "p99_seconds": 0.0123}
+def job_json(j):  # internal/jobs Run
+    state, upload = _state(j)
+    return {"run_id": j["id"], "spec": {"mode": j["mode"], "scenario": "basic", "op": "roundtrip", "count": j["count"], "concurrency": j["conc"],
+            "payload_bytes": j["payload"], "duration_seconds": j["dur"]}, "namespace": "kms-bench", "state": state, "upload": upload,
+            "created_at": j["created"].strftime("%Y-%m-%dT%H:%M:%SZ")}
+
+def jobs():
+    return sorted((job_json(j) for j in JOBS), key=lambda r: r["created_at"], reverse=True)
+
+def bench_result(rid):  # internal/jobs Result. 동시성이 높을수록 처리량↑ 지연↑ (비교 그래프 확인용)
+    j = next((x for x in JOBS if x["id"] == rid), JOBS[0])
+    c = j["conc"]; rps = 180 * (c ** 0.6); secs = float(j["dur"] or max(2.0, j["count"] / rps)); n = int(rps * secs)
+    start = j["created"] + timedelta(seconds=1); fmt = "%Y-%m-%dT%H:%M:%SZ"
+    p50 = 0.0035 + 0.0006 * c
+    return {"schema_version": 1, "run_id": rid, "mode": j["mode"], "requests": n, "success": n - c // 8, "errors": c // 8,
+            "started_at": start.strftime(fmt), "ended_at": (start + timedelta(seconds=secs)).strftime(fmt),
+            "p50_seconds": p50, "p95_seconds": p50 * 2.1, "p99_seconds": p50 * 3.2}
 
 def prom(metric, ranged, sealed):
     if metric == "sealed":
@@ -91,13 +107,13 @@ body{margin:0;font:15px system-ui,sans-serif;background:#f3f4f6;height:100vh;dis
 iframe{flex:1;border:1px solid #d1d5db;background:#fff;width:100%}
 </style>
 <div class="bar"><b>UI 비교</b>
- <label>페이지 <select id="page"><option value="dashboard">대시보드</option><option value="keys">키</option><option value="seal">봉인</option></select></label>
+ <label>페이지 <select id="page"><option value="home">홈</option><option value="dashboard">대시보드</option><option value="keys">키</option><option value="seal">봉인</option><option value="ops">성능 시험</option><option value="audit">감사 로그</option></select></label>
  <label><input type="checkbox" id="sealed"> 봉인 상태</label>
  <label>역할 <select id="role"><option>admin</option><option>viewer</option></select></label>
 </div>
 <div class="cols"><div class="col"><h3>기존 (v1)</h3><iframe id="a"></iframe></div><div class="col"><h3>새 화면 (v2)</h3><iframe id="b"></iframe></div></div>
 <script>
-const V1={dashboard:'/dashboard',keys:'/console#keys-content',seal:'/console#init-area'};
+const V1={home:'/console',ops:'/dashboard',audit:'/dashboard',dashboard:'/dashboard',keys:'/console#keys-content',seal:'/console#init-area'};
 function go(){const q='?sealed='+(sealed.checked?1:0)+'&role='+role.value,p=page.value;
  a.src=V1[p].replace(/(#|$)/,q+'$1');b.src='/v2/'+q+'#/'+p;}
 ['page','sealed','role'].forEach(i=>document.getElementById(i).onchange=go);
@@ -137,7 +153,7 @@ class H(BaseHTTPRequestHandler):
     def fake_error(self, p, q):
         # ?err=404 처럼 붙이면 키 API가 그 상태 코드로 실패한다(오류 문구 확인용)
         code = int(q["err"][0]) if "err" in q and q["err"][0].isdigit() else 0
-        if code and (p.startswith("/v1/") or p.startswith("/api/jobs")):
+        if code and (p.startswith("/v1/") or p.startswith("/api/jobs") or p in ("/encrypt", "/decrypt", "/rewrap")):
             self.send(code, {"error": "preview simulated error"}); return True
         return False
 
@@ -146,6 +162,11 @@ class H(BaseHTTPRequestHandler):
         if self.fake_error(p, q): return
         if p == "/": return self.redirect("/compare")
         if p == "/compare": return self.send(200, COMPARE, "text/html")
+        if p == "/portal": return self.page(PORTAL / "index.html", q, sealed, role)
+        if p in ("/portal.css", "/portal.js"):
+            return self.send(200, (PORTAL / p[1:]).read_bytes(), "text/css" if p.endswith("css") else "text/javascript")
+        if p == "/api/config":  # demo-app이 주는 키 목록과 서비스 계정 표시 이름
+            return self.send(200, {"keys": ["demo", "campus-shipping"], "service_account": "kms-demo/app-a"})
         if p == "/console": return self.page(CONSOLE, q, sealed, role)
         if p == "/dashboard": return self.page(OPERATIONS, q, sealed, role)
         if p == "/v2": return self.redirect("/v2/" + ("?" + u.query if u.query else ""))
@@ -157,8 +178,8 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, f.read_bytes(), mimetypes.guess_type(f.name)[0] or "application/octet-stream")
         if p == "/api/session": return self.send(200, {"role": role, "user": ("viewer@example.test" if role == "viewer" else "admin@example.test"), "csrf_token": "preview-token"})
         if p == "/v1/sys/seal-status":
-            d = {"initialized": True, "migration_required": False, "sealed": sealed, "seal_type": "shamir"}
-            if sealed: d["progress"] = "%d/3" % GLOBAL["progress"]
+            d = {"initialized": True, "migration_required": False, "sealed": sealed, "seal_type": q.get("seal", ["shamir"])[0]}
+            if sealed and d["seal_type"] == "shamir": d["progress"] = "%d/3" % GLOBAL["progress"]
             return self.send(200, d)
         if p in ("/v1/keys", "/v1/keys/"):
             return self.send(503, {"error": "sealed"}) if sealed else self.send(200, {"keys": sorted(KEYS)})
@@ -168,6 +189,15 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, key_meta(m[1])) if m[1] in KEYS else self.send(404, {"error": "not found"})
         if p == "/api/audit": return self.send(200, audit_events())
         if p == "/api/jobs": return self.send(200, jobs())
+        m = re.fullmatch(r"/api/jobs/([^/]+)", p)
+        if m:
+            j = next((x for x in JOBS if x["id"] == m[1]), None)
+            return self.send(200, job_json(j)) if j else self.send(404, "run unavailable", "text/plain")
+        if p == "/api/info":
+            return self.send(200, {"server_version": "v0.9.0-preview", "source_sha": "0123456789abcdef0123456789abcdef01234567", "audit_enabled": True,
+                                   "bench_image": "registry.example/kms-bench@sha256:" + "ab12cd34ef56" * 5 + "abcd", "admin_image": "registry.example/kms-admin@sha256:" + "9f8e7d6c5b4a" * 5 + "abcd"})
+        if p == "/api/console-users":  # 서버가 이메일을 가려서 보낸다(원문 없음)
+            return self.send(200, [{"user": "adm***@example.test", "role": "admin"}, {"user": "ops***@example.test", "role": "admin"}, {"user": "vie***@example.test", "role": "viewer"}])
         m = re.fullmatch(r"/api/bench/results/([^/]+)", p)
         if m: return self.send(200, bench_result(m[1]))
         if p == "/api/dashboard/metrics":
@@ -184,6 +214,7 @@ class H(BaseHTTPRequestHandler):
         except ValueError: body = {}
         p = urlparse(self.path).path
         if self.fake_error(p, parse_qs(urlparse(self.path).query)): return
+        if p in ("/encrypt", "/decrypt", "/rewrap"): return self.portal_op(p[1:], body)
         if role != "admin": return self.send(403, "admin required", "text/plain")
         if self.headers.get("X-CSRF-Token") != "preview-token": return self.send(403, "CSRF rejected", "text/plain")
         if p == "/v1/sys/unseal":
@@ -195,20 +226,36 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, {"sealed": True})
         if p in ("/v1/sys/init",): return self.send(409, {"error": "already initialized"})
         if p in ("/v1/keys", "/v1/keys/"):
-            KEYS[body.get("name", "new-key")] = {"latest": 1, "min": 1, "auto": body.get("auto_rotate_period_sec", 0), "created": 0}
+            KEYS[body.get("name", "new-key")] = {"latest": 1, "min": 1, "auto": body.get("auto_rotate_period_sec", 0), "created": 0, "rotated": 0}
             return self.send(201, key_meta(body.get("name", "new-key")))
         m = re.fullmatch(r"/v1/keys/([^/]+)/(rotate|config)", p)
         if m and m[1] in KEYS:
             k = KEYS[m[1]]
-            if m[2] == "rotate": k["latest"] += 1
+            if m[2] == "rotate": k["latest"] += 1; k["rotated"] = 0
             else:
                 if "min_decryption_version" in body: k["min"] = body["min_decryption_version"]
                 if "auto_rotate_period_sec" in body: k["auto"] = body["auto_rotate_period_sec"]
             return self.send(200, key_meta(m[1]))
         if p == "/api/jobs":
-            JOBS.append(("b%07x" % int(time.time()) , body.get("mode", "transit"), body.get("concurrency", 1), body.get("count", 100), datetime.now(timezone.utc), "succeeded"))
-            return self.send(201, jobs()[0])
+            j = {"id": "b%07x" % (int(time.time() * 100) & 0xfffffff), "mode": body.get("mode", "transit"), "conc": body.get("concurrency", 1), "count": body.get("count", 100),
+                 "dur": body.get("duration_seconds", 0), "payload": body.get("payload_bytes", 1024), "created": datetime.now(timezone.utc), "final": "succeeded"}
+            JOBS.append(j)
+            return self.send(201, job_json(j))
         self.send(404, {"error": "not found"})
+
+    def portal_op(self, op, body):
+        # 가짜 KMS: 암호문은 "kms:v{키의 최신 버전}:" + Base64(원문). 권한 판단은 KMS 몫이라 campus-shipping만 403.
+        key, val = body.get("key", ""), body.get("value", "")
+        if key not in ("demo", "campus-shipping"): return self.send(400, "key not allowed", "text/plain")
+        if key == "campus-shipping": return self.send(403, "Transit request failed", "text/plain")
+        import base64
+        ver = KEYS["demo"]["latest"]
+        if op == "encrypt":
+            return self.send(200, {"value": "kms:v%d:%s" % (ver, base64.b64encode(val.encode()).decode())})
+        m = re.fullmatch(r"kms:v(\d+):(.*)", val)
+        if not m: return self.send(503, "Transit request failed", "text/plain")
+        if op == "decrypt": return self.send(200, {"value": m[2]})
+        return self.send(200, {"value": "kms:v%d:%s" % (ver, m[2])})
 
     def do_DELETE(self): self.send(204, b"")
 

@@ -29,7 +29,12 @@ func main() {
 		log.Fatal("CA unavailable")
 	}
 	client.Transport = security.FileToken{Base: client.Transport, Path: os.Getenv("DEMO_TOKEN_FILE")}
-	h := demo.Handler(bench.NewClient(os.Getenv("DEMO_TRANSIT_URL"), "", client), os.Getenv("DEMO_PUBLIC_ORIGIN"))
+	keys, e := demo.ParseKeys(os.Getenv("DEMO_KEYS"))
+	if e != nil {
+		log.Fatal(e)
+	}
+	cfg := demo.Config{Keys: keys, SALabel: os.Getenv("DEMO_SA_LABEL")}
+	h := demo.Handler(bench.NewClient(os.Getenv("DEMO_TRANSIT_URL"), "", client), os.Getenv("DEMO_PUBLIC_ORIGIN"), cfg)
 	srv := security.Server(":8443", h)
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

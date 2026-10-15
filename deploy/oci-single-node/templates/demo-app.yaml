@@ -35,6 +35,13 @@ spec:
           value: /transit/token
         - name: DEMO_PUBLIC_ORIGIN
           value: https://${DEMO_FQDN}:30443
+        # 포털이 받을 수 있는 키 목록(쉼표). 권한 판단은 KMS가 한다 —
+        # campus-shipping은 app-a에 권한이 없어서 "권한 없음" 시연용이다.
+        - name: DEMO_KEYS
+          value: demo,campus-shipping
+        # 화면 상단 "이 포털은 <이름> 권한으로 동작해요"에 쓰는 표시용 이름(토큰 아님)
+        - name: DEMO_SA_LABEL
+          value: kms-demo/app-a
         - name: DEMO_TLS_CERT
           value: /tls/tls.crt
         - name: DEMO_TLS_KEY

@@ -1,0 +1,20 @@
+{
+  "result": "PASS",
+  "time_utc": "2026-10-15T00:26:41Z",
+  "scope": "actual public HTTPS + Chromium + real KMS; no synthetic proxy headers",
+  "tls_certificate_verification": true,
+  "resolved_addresses_are_public": true,
+  "client_vpn_required": false,
+  "missing_wrong_and_forged_identity_status": 401,
+  "checks": [
+    "password login",
+    "product images",
+    "new order + real encryption",
+    "shipping + real decryption",
+    "marketing KMS 403",
+    "current ciphertext accepted",
+    "late response cleared after closing",
+    "mobile 390px without overflow",
+    "no JavaScript exceptions"
+  ]
+}

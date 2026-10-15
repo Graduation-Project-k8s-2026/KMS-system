@@ -1,0 +1,14 @@
+{
+  "access": "public",
+  "url": "https://computed-usc-nuclear-modem.trycloudflare.com/store/",
+  "username": "demo",
+  "cloudflared_version": "2026.10.0",
+  "cloudflared_sha256": "e6422b9d4f72d3194bc5a38676f13667c06666523217b842a877d72a80b5ac08",
+  "anonymous_status": 401,
+  "authenticated_status": 200,
+  "tls_verified": true,
+  "client_vpn_required": false,
+  "legacy_store_route_removed": true,
+  "existing_admin_routes_preserved": true,
+  "time_utc": "2026-10-15T00:21:24Z"
+}

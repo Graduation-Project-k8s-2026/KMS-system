@@ -1,0 +1,34 @@
+{
+  "run_id": "fda52acb5aacb675ce384c39524543d4",
+  "state": "succeeded",
+  "job_uid": "967b3f56-4ddd-43c0-8f66-3cf4543f3867",
+  "spec": {
+    "scenario": "basic",
+    "op": "roundtrip",
+    "count": 500,
+    "concurrency": 4,
+    "payload_bytes": 1024,
+    "duration_seconds": 0,
+    "mode": "e2e"
+  },
+  "result": {
+    "schema_version": 1,
+    "run_id": "fda52acb5aacb675ce384c39524543d4",
+    "mode": "e2e",
+    "source_sha": "a41b11ad11ae41df4400b622e9e1a0c5a5ac097f",
+    "image_digest": "docker.io/library/kms-bench@sha256:e125cde53115d74a73e6d55610658c395d65d633390e9f1094037c5cad52c8e9",
+    "client_version": "go1.26.9",
+    "server_version": "a41b11ad11ae-rev2-20261011T020553Z",
+    "tls": true,
+    "auth": "kubernetes",
+    "retries": 0,
+    "requests": 500,
+    "success": 500,
+    "errors": 0,
+    "started_at": "2026-10-14T16:05:50.116996058Z",
+    "ended_at": "2026-10-14T16:05:52.090618914Z",
+    "p50_seconds": 0.015315216,
+    "p95_seconds": 0.020891237,
+    "p99_seconds": 0.030749313
+  }
+}

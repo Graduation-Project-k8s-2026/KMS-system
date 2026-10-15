@@ -20,7 +20,7 @@
 | T12 Secret 저장 | PASS | [identity 제거](evidence/steps12-16/identity-removed.json), [재쓰기 후 envelope](evidence/steps12-16/envelope-after-rewrite.json). 현재 2개 모두 keyID2, 전체 API 읽기 성공 |
 | T13 호스트 재부팅 | PASS | [실제 boot ID 변경·기존 share·과거 ciphertext·Secret 2개·벤치 결과 23개·감사 파일 4개 보존](evidence/steps12-16/reboot.json). 관리/Prometheus와 호스트 서비스 회복. 측정 상한 418.13초, 이 중 share 입력 17.69초 |
 | T14 백업·복원 | PASS (별도 경로 복원·PC 반출) | [정지 백업/hash](evidence/steps12-16/backup-summary.json), [복원한 etcd·API·KMS에서 이전 Secret 읽기](evidence/steps12-16/final-restored-control-plane.json). [암호 입력 없는 암호화 export·실제 복호화/hash](evidence/steps12-16/local-backup-export.json) 확인. [PC 다운로드·복구 암호 별도 보관은 사용자 확인](evidence/steps12-16/external-backup.json), 목적지 SHA256 일치도 사용자 확인 |
-| T15 데모 앱 | DEFERRED | 사용자 지시에 따라 §10의 시나리오·앱 배포를 이번 범위에서 완료 처리하지 않음 |
+| T15 데모 앱 | PASS (2026-10-15 공개 경로 범위) | Campus Store 공개 HTTPS·접속 암호·실제 KMS 암복호화·SAR 403·Portal 재시작 후 주문 보존 검증. 데모 사용자는 Tailscale 불필요. [현재 구조·검증 범위](../demo/verification.md). 기존 관리 경로의 외부 기기 검증은 T07에 남김 |
 | T16 관측 정직성 | PASS (자동 시험+실제 sealed) | sealed/401/403/5xx와 N/A 처리 tests, 실제 Job 오류·성공 구분. [실제 재부팅 후 sealed=1, API readyz 실패, 과거 시계열 보존 확인](evidence/steps12-16/reboot-sealed-observability.json) |
 | T17 회수 | PARTIAL | 역할/토큰/인증서 만료·교체 자동 시험. 실제 tailnet 기기 회수·모든 운영 자격증명 교체는 미검증. [Transit/ingest 인증서](evidence/steps12-16/certificate-expiry.json)와 [Kubernetes 인증서](evidence/steps12-16/kubernetes-certificate-expiry.json) 만료 점검 완료 |
 | T18 성능 | PASS (명시 조건) | [18개 trial·요약](benchmark/README.md), [차트](benchmark/throughput.svg), 동일 Spec/image, 오류0. fake K8sSeal/TPM simulator 한계 별도 표기 |
@@ -47,4 +47,4 @@
 
 실제 재부팅 뒤 KMS는 sealed 상태로 정상 기동했고 API readiness는 실패했다. 기존 share 입력 후 KMS provider가 먼저 정상화됐으며 informer 동기화 대기 후 전체 readyz가 회복됐다. 초기 준비부터 최종 검증까지 418.13초이며 share 입력 17.69초를 차감하면 400.44초다. 예약 대기·운영자 재접속·검증 지연을 포함한 상한값으로, 순수 서버 시작 시간이나 전체 사람 대기를 제외한 값으로 해석하지 않는다.
 
-최종 암호화 백업은 생성 후 실제 복호화로 15개 파일을 대조했고, 운영자가 PC 다운로드·복구 암호 별도 보관·목적지 SHA256 일치를 확인했다. 공유용 제출 묶음에는 이 운영 백업과 복구 암호를 포함하지 않는다. T07/T17의 실제 외부 기기·운영 자격증명 교체 시연은 여전히 PARTIAL이고 T15는 사용자 보류다.
+최종 암호화 백업은 생성 후 실제 복호화로 15개 파일을 대조했고, 운영자가 PC 다운로드·복구 암호 별도 보관·목적지 SHA256 일치를 확인했다. 공유용 제출 묶음에는 이 운영 백업과 복구 암호를 포함하지 않는다. T07/T17의 실제 외부 기기·운영 자격증명 교체 시연은 여전히 PARTIAL이다. T15는 2026-10-14 사설 경로 배포 후, 2026-10-15 사용자 요청에 따라 공개 HTTPS 사용자 경로로 전환해 실제 연동을 검증했다. 기존 관리 경로의 외부 기기 검증은 T07의 별도 범위다. [시나리오와 구성도](../demo/campus-store.md), [검증 기록](../demo/verification.md).

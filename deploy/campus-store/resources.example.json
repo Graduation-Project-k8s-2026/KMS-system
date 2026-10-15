@@ -1,0 +1,1468 @@
+{
+  "apiVersion": "v1",
+  "kind": "List",
+  "items": [
+    {
+      "apiVersion": "v1",
+      "kind": "Namespace",
+      "metadata": {
+        "name": "campus-store"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Secret",
+      "metadata": {
+        "name": "store-access",
+        "namespace": "campus-store"
+      },
+      "type": "Opaque",
+      "data": {
+        "password": "R0VORVJBVEVEX0FUX0RFUExPWU1FTlQ="
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Secret",
+      "metadata": {
+        "name": "store-internal",
+        "namespace": "campus-store"
+      },
+      "type": "Opaque",
+      "data": {
+        "token": "R0VORVJBVEVEX0FUX0RFUExPWU1FTlQ=",
+        "ca.crt": "R0VORVJBVEVEX0FUX0RFUExPWU1FTlQ=",
+        "tls.crt": "R0VORVJBVEVEX0FUX0RFUExPWU1FTlQ=",
+        "tls.key": "R0VORVJBVEVEX0FUX0RFUExPWU1FTlQ="
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "ConfigMap",
+      "metadata": {
+        "name": "kms-ca",
+        "namespace": "campus-store"
+      },
+      "data": {
+        "ca.crt": "REPLACE_WITH_PUBLIC_KMS_CA"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "PersistentVolume",
+      "metadata": {
+        "name": "campus-store-data"
+      },
+      "spec": {
+        "capacity": {
+          "storage": "1Gi"
+        },
+        "volumeMode": "Filesystem",
+        "accessModes": [
+          "ReadWriteOnce"
+        ],
+        "persistentVolumeReclaimPolicy": "Retain",
+        "storageClassName": "",
+        "local": {
+          "path": "/var/lib/campus-store"
+        },
+        "nodeAffinity": {
+          "required": {
+            "nodeSelectorTerms": [
+              {
+                "matchExpressions": [
+                  {
+                    "key": "kubernetes.io/hostname",
+                    "operator": "In",
+                    "values": [
+                      "REPLACE_WITH_NODE_NAME"
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "PersistentVolumeClaim",
+      "metadata": {
+        "name": "store-data",
+        "namespace": "campus-store"
+      },
+      "spec": {
+        "accessModes": [
+          "ReadWriteOnce"
+        ],
+        "storageClassName": "",
+        "volumeName": "campus-store-data",
+        "resources": {
+          "requests": {
+            "storage": "1Gi"
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "ServiceAccount",
+      "metadata": {
+        "name": "portal",
+        "namespace": "campus-store"
+      },
+      "automountServiceAccountToken": false
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "ServiceAccount",
+      "metadata": {
+        "name": "checkout",
+        "namespace": "campus-store"
+      },
+      "automountServiceAccountToken": false
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "ServiceAccount",
+      "metadata": {
+        "name": "shipping",
+        "namespace": "campus-store"
+      },
+      "automountServiceAccountToken": false
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "ServiceAccount",
+      "metadata": {
+        "name": "marketing",
+        "namespace": "campus-store"
+      },
+      "automountServiceAccountToken": false
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "ServiceAccount",
+      "metadata": {
+        "name": "migration",
+        "namespace": "campus-store"
+      },
+      "automountServiceAccountToken": false
+    },
+    {
+      "apiVersion": "rbac.authorization.k8s.io/v1",
+      "kind": "Role",
+      "metadata": {
+        "name": "checkout",
+        "namespace": "campus-store"
+      },
+      "rules": [
+        {
+          "apiGroups": [
+            "kms.local"
+          ],
+          "resources": [
+            "keys"
+          ],
+          "resourceNames": [
+            "campus-shipping"
+          ],
+          "verbs": [
+            "encrypt"
+          ]
+        }
+      ]
+    },
+    {
+      "apiVersion": "rbac.authorization.k8s.io/v1",
+      "kind": "RoleBinding",
+      "metadata": {
+        "name": "checkout",
+        "namespace": "campus-store"
+      },
+      "subjects": [
+        {
+          "kind": "ServiceAccount",
+          "name": "checkout",
+          "namespace": "campus-store"
+        }
+      ],
+      "roleRef": {
+        "apiGroup": "rbac.authorization.k8s.io",
+        "kind": "Role",
+        "name": "checkout"
+      }
+    },
+    {
+      "apiVersion": "rbac.authorization.k8s.io/v1",
+      "kind": "Role",
+      "metadata": {
+        "name": "shipping",
+        "namespace": "campus-store"
+      },
+      "rules": [
+        {
+          "apiGroups": [
+            "kms.local"
+          ],
+          "resources": [
+            "keys"
+          ],
+          "resourceNames": [
+            "campus-shipping"
+          ],
+          "verbs": [
+            "decrypt"
+          ]
+        }
+      ]
+    },
+    {
+      "apiVersion": "rbac.authorization.k8s.io/v1",
+      "kind": "RoleBinding",
+      "metadata": {
+        "name": "shipping",
+        "namespace": "campus-store"
+      },
+      "subjects": [
+        {
+          "kind": "ServiceAccount",
+          "name": "shipping",
+          "namespace": "campus-store"
+        }
+      ],
+      "roleRef": {
+        "apiGroup": "rbac.authorization.k8s.io",
+        "kind": "Role",
+        "name": "shipping"
+      }
+    },
+    {
+      "apiVersion": "rbac.authorization.k8s.io/v1",
+      "kind": "Role",
+      "metadata": {
+        "name": "migration",
+        "namespace": "campus-store"
+      },
+      "rules": [
+        {
+          "apiGroups": [
+            "kms.local"
+          ],
+          "resources": [
+            "keys"
+          ],
+          "resourceNames": [
+            "campus-shipping"
+          ],
+          "verbs": [
+            "rewrap"
+          ]
+        }
+      ]
+    },
+    {
+      "apiVersion": "rbac.authorization.k8s.io/v1",
+      "kind": "RoleBinding",
+      "metadata": {
+        "name": "migration",
+        "namespace": "campus-store"
+      },
+      "subjects": [
+        {
+          "kind": "ServiceAccount",
+          "name": "migration",
+          "namespace": "campus-store"
+        }
+      ],
+      "roleRef": {
+        "apiGroup": "rbac.authorization.k8s.io",
+        "kind": "Role",
+        "name": "migration"
+      }
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "metadata": {
+        "name": "portal",
+        "namespace": "campus-store"
+      },
+      "spec": {
+        "replicas": 1,
+        "strategy": {
+          "type": "Recreate"
+        },
+        "selector": {
+          "matchLabels": {
+            "app": "campus-portal"
+          }
+        },
+        "template": {
+          "metadata": {
+            "labels": {
+              "app": "campus-portal"
+            }
+          },
+          "spec": {
+            "serviceAccountName": "portal",
+            "automountServiceAccountToken": false,
+            "nodeSelector": {
+              "kubernetes.io/hostname": "REPLACE_WITH_NODE_NAME"
+            },
+            "tolerations": [
+              {
+                "key": "node-role.kubernetes.io/control-plane",
+                "operator": "Exists",
+                "effect": "NoSchedule"
+              }
+            ],
+            "dnsConfig": {
+              "options": [
+                {
+                  "name": "ndots",
+                  "value": "1"
+                }
+              ]
+            },
+            "securityContext": {
+              "runAsUser": 10001,
+              "runAsGroup": 10001,
+              "runAsNonRoot": true,
+              "fsGroup": 10001,
+              "seccompProfile": {
+                "type": "RuntimeDefault"
+              }
+            },
+            "containers": [
+              {
+                "name": "app",
+                "image": "campus-store:3099e1074354",
+                "imagePullPolicy": "Never",
+                "env": [
+                  {
+                    "name": "STORE_MODE",
+                    "value": "portal"
+                  },
+                  {
+                    "name": "STORE_KEY",
+                    "value": "campus-shipping"
+                  },
+                  {
+                    "name": "STORE_INTERNAL_TOKEN_FILE",
+                    "value": "/internal/token"
+                  },
+                  {
+                    "name": "STORE_BIND",
+                    "value": "127.0.0.1"
+                  },
+                  {
+                    "name": "STORE_PORT",
+                    "value": "8300"
+                  },
+                  {
+                    "name": "STORE_ORIGIN",
+                    "value": "https://public.example"
+                  },
+                  {
+                    "name": "STORE_PREFIX",
+                    "value": "/store"
+                  },
+                  {
+                    "name": "STORE_DEMO_ACCOUNTS",
+                    "value": "1"
+                  },
+                  {
+                    "name": "STORE_REQUIRE_TAILSCALE",
+                    "value": "0"
+                  },
+                  {
+                    "name": "STORE_DB",
+                    "value": "/data/orders.db"
+                  },
+                  {
+                    "name": "STORE_WORKER_CA",
+                    "value": "/internal/ca.crt"
+                  },
+                  {
+                    "name": "STORE_ORIGIN_FILE",
+                    "value": "/public-origin/origin"
+                  },
+                  {
+                    "name": "STORE_ACCESS_PASSWORD_FILE",
+                    "value": "/access/password"
+                  },
+                  {
+                    "name": "STORE_CHECKOUT_URL",
+                    "value": "https://checkout.campus-store.svc.cluster.local:8443"
+                  },
+                  {
+                    "name": "STORE_SHIPPING_URL",
+                    "value": "https://shipping.campus-store.svc.cluster.local:8443"
+                  },
+                  {
+                    "name": "STORE_MARKETING_URL",
+                    "value": "https://marketing.campus-store.svc.cluster.local:8443"
+                  },
+                  {
+                    "name": "STORE_MIGRATION_URL",
+                    "value": "https://migration.campus-store.svc.cluster.local:8443"
+                  }
+                ],
+                "volumeMounts": [
+                  {
+                    "name": "internal",
+                    "mountPath": "/internal",
+                    "readOnly": true
+                  },
+                  {
+                    "name": "tmp",
+                    "mountPath": "/tmp"
+                  },
+                  {
+                    "name": "public-origin",
+                    "mountPath": "/public-origin",
+                    "readOnly": true
+                  },
+                  {
+                    "name": "access",
+                    "mountPath": "/access",
+                    "readOnly": true
+                  },
+                  {
+                    "name": "data",
+                    "mountPath": "/data"
+                  }
+                ],
+                "resources": {
+                  "requests": {
+                    "cpu": "20m",
+                    "memory": "32Mi"
+                  },
+                  "limits": {
+                    "cpu": "500m",
+                    "memory": "160Mi"
+                  }
+                },
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "readOnlyRootFilesystem": true,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  }
+                },
+                "readinessProbe": {
+                  "exec": {
+                    "command": [
+                      "python3",
+                      "-c",
+                      "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8300/healthz', timeout=2).read()"
+                    ]
+                  },
+                  "initialDelaySeconds": 3,
+                  "periodSeconds": 10,
+                  "timeoutSeconds": 3
+                },
+                "livenessProbe": {
+                  "exec": {
+                    "command": [
+                      "python3",
+                      "-c",
+                      "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8300/healthz', timeout=2).read()"
+                    ]
+                  },
+                  "initialDelaySeconds": 3,
+                  "periodSeconds": 10,
+                  "timeoutSeconds": 3,
+                  "failureThreshold": 6
+                }
+              }
+            ],
+            "volumes": [
+              {
+                "name": "internal",
+                "secret": {
+                  "secretName": "store-internal",
+                  "defaultMode": 288,
+                  "items": [
+                    {
+                      "key": "token",
+                      "path": "token"
+                    },
+                    {
+                      "key": "ca.crt",
+                      "path": "ca.crt"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "tmp",
+                "emptyDir": {
+                  "sizeLimit": "16Mi"
+                }
+              },
+              {
+                "name": "public-origin",
+                "hostPath": {
+                  "path": "/var/lib/campus-store-edge/public",
+                  "type": "Directory"
+                }
+              },
+              {
+                "name": "access",
+                "secret": {
+                  "secretName": "store-access",
+                  "defaultMode": 288
+                }
+              },
+              {
+                "name": "data",
+                "persistentVolumeClaim": {
+                  "claimName": "store-data"
+                }
+              }
+            ],
+            "hostNetwork": true,
+            "dnsPolicy": "ClusterFirstWithHostNet"
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "checkout",
+        "namespace": "campus-store"
+      },
+      "spec": {
+        "selector": {
+          "app": "campus-checkout"
+        },
+        "ports": [
+          {
+            "name": "https",
+            "port": 8443,
+            "targetPort": 8443
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "metadata": {
+        "name": "checkout",
+        "namespace": "campus-store"
+      },
+      "spec": {
+        "replicas": 1,
+        "strategy": {
+          "type": "Recreate"
+        },
+        "selector": {
+          "matchLabels": {
+            "app": "campus-checkout"
+          }
+        },
+        "template": {
+          "metadata": {
+            "labels": {
+              "app": "campus-checkout"
+            }
+          },
+          "spec": {
+            "serviceAccountName": "checkout",
+            "automountServiceAccountToken": false,
+            "nodeSelector": {
+              "kubernetes.io/hostname": "REPLACE_WITH_NODE_NAME"
+            },
+            "tolerations": [
+              {
+                "key": "node-role.kubernetes.io/control-plane",
+                "operator": "Exists",
+                "effect": "NoSchedule"
+              }
+            ],
+            "dnsConfig": {
+              "options": [
+                {
+                  "name": "ndots",
+                  "value": "1"
+                }
+              ]
+            },
+            "securityContext": {
+              "runAsUser": 10001,
+              "runAsGroup": 10001,
+              "runAsNonRoot": true,
+              "fsGroup": 10001,
+              "seccompProfile": {
+                "type": "RuntimeDefault"
+              }
+            },
+            "containers": [
+              {
+                "name": "app",
+                "image": "campus-store:3099e1074354",
+                "imagePullPolicy": "Never",
+                "env": [
+                  {
+                    "name": "STORE_MODE",
+                    "value": "checkout"
+                  },
+                  {
+                    "name": "STORE_KEY",
+                    "value": "campus-shipping"
+                  },
+                  {
+                    "name": "STORE_INTERNAL_TOKEN_FILE",
+                    "value": "/internal/token"
+                  },
+                  {
+                    "name": "STORE_TLS_CERT",
+                    "value": "/internal/tls.crt"
+                  },
+                  {
+                    "name": "STORE_TLS_KEY",
+                    "value": "/internal/tls.key"
+                  },
+                  {
+                    "name": "KMS_TRANSIT_URL",
+                    "value": "https://kms-transit.kube-system.svc.cluster.local:8200"
+                  },
+                  {
+                    "name": "KMS_CA_FILE",
+                    "value": "/kms-ca/ca.crt"
+                  },
+                  {
+                    "name": "KMS_TOKEN_FILE",
+                    "value": "/kms-token/token"
+                  }
+                ],
+                "volumeMounts": [
+                  {
+                    "name": "internal",
+                    "mountPath": "/internal",
+                    "readOnly": true
+                  },
+                  {
+                    "name": "tmp",
+                    "mountPath": "/tmp"
+                  },
+                  {
+                    "name": "kms-ca",
+                    "mountPath": "/kms-ca",
+                    "readOnly": true
+                  },
+                  {
+                    "name": "kms-token",
+                    "mountPath": "/kms-token",
+                    "readOnly": true
+                  }
+                ],
+                "resources": {
+                  "requests": {
+                    "cpu": "20m",
+                    "memory": "32Mi"
+                  },
+                  "limits": {
+                    "cpu": "500m",
+                    "memory": "160Mi"
+                  }
+                },
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "readOnlyRootFilesystem": true,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  }
+                },
+                "readinessProbe": {
+                  "httpGet": {
+                    "path": "/healthz",
+                    "port": 8443,
+                    "scheme": "HTTPS"
+                  },
+                  "initialDelaySeconds": 3,
+                  "periodSeconds": 10,
+                  "timeoutSeconds": 3
+                },
+                "livenessProbe": {
+                  "httpGet": {
+                    "path": "/healthz",
+                    "port": 8443,
+                    "scheme": "HTTPS"
+                  },
+                  "initialDelaySeconds": 3,
+                  "periodSeconds": 10,
+                  "timeoutSeconds": 3,
+                  "failureThreshold": 6
+                }
+              }
+            ],
+            "volumes": [
+              {
+                "name": "internal",
+                "secret": {
+                  "secretName": "store-internal",
+                  "defaultMode": 288,
+                  "items": [
+                    {
+                      "key": "token",
+                      "path": "token"
+                    },
+                    {
+                      "key": "ca.crt",
+                      "path": "ca.crt"
+                    },
+                    {
+                      "key": "tls.crt",
+                      "path": "tls.crt"
+                    },
+                    {
+                      "key": "tls.key",
+                      "path": "tls.key"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "tmp",
+                "emptyDir": {
+                  "sizeLimit": "16Mi"
+                }
+              },
+              {
+                "name": "kms-ca",
+                "configMap": {
+                  "name": "kms-ca"
+                }
+              },
+              {
+                "name": "kms-token",
+                "projected": {
+                  "defaultMode": 288,
+                  "sources": [
+                    {
+                      "serviceAccountToken": {
+                        "path": "token",
+                        "expirationSeconds": 3600,
+                        "audience": "kms-system"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "shipping",
+        "namespace": "campus-store"
+      },
+      "spec": {
+        "selector": {
+          "app": "campus-shipping"
+        },
+        "ports": [
+          {
+            "name": "https",
+            "port": 8443,
+            "targetPort": 8443
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "metadata": {
+        "name": "shipping",
+        "namespace": "campus-store"
+      },
+      "spec": {
+        "replicas": 1,
+        "strategy": {
+          "type": "Recreate"
+        },
+        "selector": {
+          "matchLabels": {
+            "app": "campus-shipping"
+          }
+        },
+        "template": {
+          "metadata": {
+            "labels": {
+              "app": "campus-shipping"
+            }
+          },
+          "spec": {
+            "serviceAccountName": "shipping",
+            "automountServiceAccountToken": false,
+            "nodeSelector": {
+              "kubernetes.io/hostname": "REPLACE_WITH_NODE_NAME"
+            },
+            "tolerations": [
+              {
+                "key": "node-role.kubernetes.io/control-plane",
+                "operator": "Exists",
+                "effect": "NoSchedule"
+              }
+            ],
+            "dnsConfig": {
+              "options": [
+                {
+                  "name": "ndots",
+                  "value": "1"
+                }
+              ]
+            },
+            "securityContext": {
+              "runAsUser": 10001,
+              "runAsGroup": 10001,
+              "runAsNonRoot": true,
+              "fsGroup": 10001,
+              "seccompProfile": {
+                "type": "RuntimeDefault"
+              }
+            },
+            "containers": [
+              {
+                "name": "app",
+                "image": "campus-store:3099e1074354",
+                "imagePullPolicy": "Never",
+                "env": [
+                  {
+                    "name": "STORE_MODE",
+                    "value": "shipping"
+                  },
+                  {
+                    "name": "STORE_KEY",
+                    "value": "campus-shipping"
+                  },
+                  {
+                    "name": "STORE_INTERNAL_TOKEN_FILE",
+                    "value": "/internal/token"
+                  },
+                  {
+                    "name": "STORE_TLS_CERT",
+                    "value": "/internal/tls.crt"
+                  },
+                  {
+                    "name": "STORE_TLS_KEY",
+                    "value": "/internal/tls.key"
+                  },
+                  {
+                    "name": "KMS_TRANSIT_URL",
+                    "value": "https://kms-transit.kube-system.svc.cluster.local:8200"
+                  },
+                  {
+                    "name": "KMS_CA_FILE",
+                    "value": "/kms-ca/ca.crt"
+                  },
+                  {
+                    "name": "KMS_TOKEN_FILE",
+                    "value": "/kms-token/token"
+                  }
+                ],
+                "volumeMounts": [
+                  {
+                    "name": "internal",
+                    "mountPath": "/internal",
+                    "readOnly": true
+                  },
+                  {
+                    "name": "tmp",
+                    "mountPath": "/tmp"
+                  },
+                  {
+                    "name": "kms-ca",
+                    "mountPath": "/kms-ca",
+                    "readOnly": true
+                  },
+                  {
+                    "name": "kms-token",
+                    "mountPath": "/kms-token",
+                    "readOnly": true
+                  }
+                ],
+                "resources": {
+                  "requests": {
+                    "cpu": "20m",
+                    "memory": "32Mi"
+                  },
+                  "limits": {
+                    "cpu": "500m",
+                    "memory": "160Mi"
+                  }
+                },
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "readOnlyRootFilesystem": true,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  }
+                },
+                "readinessProbe": {
+                  "httpGet": {
+                    "path": "/healthz",
+                    "port": 8443,
+                    "scheme": "HTTPS"
+                  },
+                  "initialDelaySeconds": 3,
+                  "periodSeconds": 10,
+                  "timeoutSeconds": 3
+                },
+                "livenessProbe": {
+                  "httpGet": {
+                    "path": "/healthz",
+                    "port": 8443,
+                    "scheme": "HTTPS"
+                  },
+                  "initialDelaySeconds": 3,
+                  "periodSeconds": 10,
+                  "timeoutSeconds": 3,
+                  "failureThreshold": 6
+                }
+              }
+            ],
+            "volumes": [
+              {
+                "name": "internal",
+                "secret": {
+                  "secretName": "store-internal",
+                  "defaultMode": 288,
+                  "items": [
+                    {
+                      "key": "token",
+                      "path": "token"
+                    },
+                    {
+                      "key": "ca.crt",
+                      "path": "ca.crt"
+                    },
+                    {
+                      "key": "tls.crt",
+                      "path": "tls.crt"
+                    },
+                    {
+                      "key": "tls.key",
+                      "path": "tls.key"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "tmp",
+                "emptyDir": {
+                  "sizeLimit": "16Mi"
+                }
+              },
+              {
+                "name": "kms-ca",
+                "configMap": {
+                  "name": "kms-ca"
+                }
+              },
+              {
+                "name": "kms-token",
+                "projected": {
+                  "defaultMode": 288,
+                  "sources": [
+                    {
+                      "serviceAccountToken": {
+                        "path": "token",
+                        "expirationSeconds": 3600,
+                        "audience": "kms-system"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "marketing",
+        "namespace": "campus-store"
+      },
+      "spec": {
+        "selector": {
+          "app": "campus-marketing"
+        },
+        "ports": [
+          {
+            "name": "https",
+            "port": 8443,
+            "targetPort": 8443
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "metadata": {
+        "name": "marketing",
+        "namespace": "campus-store"
+      },
+      "spec": {
+        "replicas": 1,
+        "strategy": {
+          "type": "Recreate"
+        },
+        "selector": {
+          "matchLabels": {
+            "app": "campus-marketing"
+          }
+        },
+        "template": {
+          "metadata": {
+            "labels": {
+              "app": "campus-marketing"
+            }
+          },
+          "spec": {
+            "serviceAccountName": "marketing",
+            "automountServiceAccountToken": false,
+            "nodeSelector": {
+              "kubernetes.io/hostname": "REPLACE_WITH_NODE_NAME"
+            },
+            "tolerations": [
+              {
+                "key": "node-role.kubernetes.io/control-plane",
+                "operator": "Exists",
+                "effect": "NoSchedule"
+              }
+            ],
+            "dnsConfig": {
+              "options": [
+                {
+                  "name": "ndots",
+                  "value": "1"
+                }
+              ]
+            },
+            "securityContext": {
+              "runAsUser": 10001,
+              "runAsGroup": 10001,
+              "runAsNonRoot": true,
+              "fsGroup": 10001,
+              "seccompProfile": {
+                "type": "RuntimeDefault"
+              }
+            },
+            "containers": [
+              {
+                "name": "app",
+                "image": "campus-store:3099e1074354",
+                "imagePullPolicy": "Never",
+                "env": [
+                  {
+                    "name": "STORE_MODE",
+                    "value": "marketing"
+                  },
+                  {
+                    "name": "STORE_KEY",
+                    "value": "campus-shipping"
+                  },
+                  {
+                    "name": "STORE_INTERNAL_TOKEN_FILE",
+                    "value": "/internal/token"
+                  },
+                  {
+                    "name": "STORE_TLS_CERT",
+                    "value": "/internal/tls.crt"
+                  },
+                  {
+                    "name": "STORE_TLS_KEY",
+                    "value": "/internal/tls.key"
+                  },
+                  {
+                    "name": "KMS_TRANSIT_URL",
+                    "value": "https://kms-transit.kube-system.svc.cluster.local:8200"
+                  },
+                  {
+                    "name": "KMS_CA_FILE",
+                    "value": "/kms-ca/ca.crt"
+                  },
+                  {
+                    "name": "KMS_TOKEN_FILE",
+                    "value": "/kms-token/token"
+                  }
+                ],
+                "volumeMounts": [
+                  {
+                    "name": "internal",
+                    "mountPath": "/internal",
+                    "readOnly": true
+                  },
+                  {
+                    "name": "tmp",
+                    "mountPath": "/tmp"
+                  },
+                  {
+                    "name": "kms-ca",
+                    "mountPath": "/kms-ca",
+                    "readOnly": true
+                  },
+                  {
+                    "name": "kms-token",
+                    "mountPath": "/kms-token",
+                    "readOnly": true
+                  }
+                ],
+                "resources": {
+                  "requests": {
+                    "cpu": "20m",
+                    "memory": "32Mi"
+                  },
+                  "limits": {
+                    "cpu": "500m",
+                    "memory": "160Mi"
+                  }
+                },
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "readOnlyRootFilesystem": true,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  }
+                },
+                "readinessProbe": {
+                  "httpGet": {
+                    "path": "/healthz",
+                    "port": 8443,
+                    "scheme": "HTTPS"
+                  },
+                  "initialDelaySeconds": 3,
+                  "periodSeconds": 10,
+                  "timeoutSeconds": 3
+                },
+                "livenessProbe": {
+                  "httpGet": {
+                    "path": "/healthz",
+                    "port": 8443,
+                    "scheme": "HTTPS"
+                  },
+                  "initialDelaySeconds": 3,
+                  "periodSeconds": 10,
+                  "timeoutSeconds": 3,
+                  "failureThreshold": 6
+                }
+              }
+            ],
+            "volumes": [
+              {
+                "name": "internal",
+                "secret": {
+                  "secretName": "store-internal",
+                  "defaultMode": 288,
+                  "items": [
+                    {
+                      "key": "token",
+                      "path": "token"
+                    },
+                    {
+                      "key": "ca.crt",
+                      "path": "ca.crt"
+                    },
+                    {
+                      "key": "tls.crt",
+                      "path": "tls.crt"
+                    },
+                    {
+                      "key": "tls.key",
+                      "path": "tls.key"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "tmp",
+                "emptyDir": {
+                  "sizeLimit": "16Mi"
+                }
+              },
+              {
+                "name": "kms-ca",
+                "configMap": {
+                  "name": "kms-ca"
+                }
+              },
+              {
+                "name": "kms-token",
+                "projected": {
+                  "defaultMode": 288,
+                  "sources": [
+                    {
+                      "serviceAccountToken": {
+                        "path": "token",
+                        "expirationSeconds": 3600,
+                        "audience": "kms-system"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "migration",
+        "namespace": "campus-store"
+      },
+      "spec": {
+        "selector": {
+          "app": "campus-migration"
+        },
+        "ports": [
+          {
+            "name": "https",
+            "port": 8443,
+            "targetPort": 8443
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "metadata": {
+        "name": "migration",
+        "namespace": "campus-store"
+      },
+      "spec": {
+        "replicas": 1,
+        "strategy": {
+          "type": "Recreate"
+        },
+        "selector": {
+          "matchLabels": {
+            "app": "campus-migration"
+          }
+        },
+        "template": {
+          "metadata": {
+            "labels": {
+              "app": "campus-migration"
+            }
+          },
+          "spec": {
+            "serviceAccountName": "migration",
+            "automountServiceAccountToken": false,
+            "nodeSelector": {
+              "kubernetes.io/hostname": "REPLACE_WITH_NODE_NAME"
+            },
+            "tolerations": [
+              {
+                "key": "node-role.kubernetes.io/control-plane",
+                "operator": "Exists",
+                "effect": "NoSchedule"
+              }
+            ],
+            "dnsConfig": {
+              "options": [
+                {
+                  "name": "ndots",
+                  "value": "1"
+                }
+              ]
+            },
+            "securityContext": {
+              "runAsUser": 10001,
+              "runAsGroup": 10001,
+              "runAsNonRoot": true,
+              "fsGroup": 10001,
+              "seccompProfile": {
+                "type": "RuntimeDefault"
+              }
+            },
+            "containers": [
+              {
+                "name": "app",
+                "image": "campus-store:3099e1074354",
+                "imagePullPolicy": "Never",
+                "env": [
+                  {
+                    "name": "STORE_MODE",
+                    "value": "migration"
+                  },
+                  {
+                    "name": "STORE_KEY",
+                    "value": "campus-shipping"
+                  },
+                  {
+                    "name": "STORE_INTERNAL_TOKEN_FILE",
+                    "value": "/internal/token"
+                  },
+                  {
+                    "name": "STORE_TLS_CERT",
+                    "value": "/internal/tls.crt"
+                  },
+                  {
+                    "name": "STORE_TLS_KEY",
+                    "value": "/internal/tls.key"
+                  },
+                  {
+                    "name": "KMS_TRANSIT_URL",
+                    "value": "https://kms-transit.kube-system.svc.cluster.local:8200"
+                  },
+                  {
+                    "name": "KMS_CA_FILE",
+                    "value": "/kms-ca/ca.crt"
+                  },
+                  {
+                    "name": "KMS_TOKEN_FILE",
+                    "value": "/kms-token/token"
+                  }
+                ],
+                "volumeMounts": [
+                  {
+                    "name": "internal",
+                    "mountPath": "/internal",
+                    "readOnly": true
+                  },
+                  {
+                    "name": "tmp",
+                    "mountPath": "/tmp"
+                  },
+                  {
+                    "name": "kms-ca",
+                    "mountPath": "/kms-ca",
+                    "readOnly": true
+                  },
+                  {
+                    "name": "kms-token",
+                    "mountPath": "/kms-token",
+                    "readOnly": true
+                  }
+                ],
+                "resources": {
+                  "requests": {
+                    "cpu": "20m",
+                    "memory": "32Mi"
+                  },
+                  "limits": {
+                    "cpu": "500m",
+                    "memory": "160Mi"
+                  }
+                },
+                "securityContext": {
+                  "allowPrivilegeEscalation": false,
+                  "readOnlyRootFilesystem": true,
+                  "capabilities": {
+                    "drop": [
+                      "ALL"
+                    ]
+                  }
+                },
+                "readinessProbe": {
+                  "httpGet": {
+                    "path": "/healthz",
+                    "port": 8443,
+                    "scheme": "HTTPS"
+                  },
+                  "initialDelaySeconds": 3,
+                  "periodSeconds": 10,
+                  "timeoutSeconds": 3
+                },
+                "livenessProbe": {
+                  "httpGet": {
+                    "path": "/healthz",
+                    "port": 8443,
+                    "scheme": "HTTPS"
+                  },
+                  "initialDelaySeconds": 3,
+                  "periodSeconds": 10,
+                  "timeoutSeconds": 3,
+                  "failureThreshold": 6
+                }
+              }
+            ],
+            "volumes": [
+              {
+                "name": "internal",
+                "secret": {
+                  "secretName": "store-internal",
+                  "defaultMode": 288,
+                  "items": [
+                    {
+                      "key": "token",
+                      "path": "token"
+                    },
+                    {
+                      "key": "ca.crt",
+                      "path": "ca.crt"
+                    },
+                    {
+                      "key": "tls.crt",
+                      "path": "tls.crt"
+                    },
+                    {
+                      "key": "tls.key",
+                      "path": "tls.key"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "tmp",
+                "emptyDir": {
+                  "sizeLimit": "16Mi"
+                }
+              },
+              {
+                "name": "kms-ca",
+                "configMap": {
+                  "name": "kms-ca"
+                }
+              },
+              {
+                "name": "kms-token",
+                "projected": {
+                  "defaultMode": 288,
+                  "sources": [
+                    {
+                      "serviceAccountToken": {
+                        "path": "token",
+                        "expirationSeconds": 3600,
+                        "audience": "kms-system"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "result": "PASS",
+  "uid": 10001,
+  "readonly_rootfs": true,
+  "network": "none",
+  "capabilities": "all dropped",
+  "healthz": {
+    "status": "up",
+    "mode": "portal"
+  },
+  "fixture_in_app_image": false,
+  "image_id": "sha256:5b936fa41ede0d43f64168febd8f1c0f3e34769a0e0264c64da310227ea2d302",
+  "architecture": "arm64",
+  "user": "10001:10001"
+}

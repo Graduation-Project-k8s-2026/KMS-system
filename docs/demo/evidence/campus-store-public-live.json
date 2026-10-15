@@ -1,0 +1,53 @@
+{
+  "result": "PASS",
+  "scope": "deployed portal + real workers + real KMS + real Kubernetes SAR",
+  "browser_identity_scope": "public HTTPS + actual Basic authentication; no Tailscale headers",
+  "key_policy_changes": false,
+  "kms_seal_or_restart": false,
+  "namespace": "campus-store",
+  "image": "campus-store:50d89037b9d2",
+  "checks": [
+    "public HTTPS rejected missing presentation credentials",
+    "real Transit encrypt persisted two fictional orders; customer isolation and role denial verified",
+    "real shipping JWT decrypt returned matching fictional recipients and shipping state persisted",
+    "marketing real KMS + Kubernetes SAR denied decrypt with HTTP 403; aggregate sales still available",
+    "actual stored ciphertext visible in presenter view; tampered copy rejected with HTTP 400",
+    "fictional recipient plaintext absent from actual SQLite/WAL files",
+    "Portal Pod replaced; same order IDs and recipient decrypt survived PVC-backed restart",
+    "all five deployments ready; original admin route preserved; legacy store route removed"
+  ],
+  "https_host_self_access": {
+    "/store/": {
+      "status": 401,
+      "system_ca_and_hostname_verified": true
+    },
+    "/": {
+      "status": 401,
+      "system_ca_and_hostname_verified": true
+    }
+  },
+  "orders": [
+    {
+      "id": "CS-A0622E1D72",
+      "version": 1
+    },
+    {
+      "id": "CS-3865B4E29D",
+      "version": 1
+    }
+  ],
+  "database_scan": {
+    "plaintext_absent": true,
+    "files_checked": 1
+  },
+  "deployments": {
+    "checkout": 1,
+    "marketing": 1,
+    "migration": 1,
+    "portal": 1,
+    "shipping": 1
+  },
+  "time_utc": "2026-10-15T00:22:58Z",
+  "external_allowed_and_denied_device_test": "NOT RUN",
+  "rotation_rewrap_minimum_version": "isolated evidence only; production key policies unchanged"
+}

@@ -1,0 +1,14 @@
+test_crypto_failure_does_not_persist_order (test_store.StoreTests.test_crypto_failure_does_not_persist_order) ... ok
+test_customer_isolation_and_role_enforcement (test_store.StoreTests.test_customer_isolation_and_role_enforcement) ... ok
+test_http_origin_csrf_sessions_and_xss_safe_assets (test_store.StoreTests.test_http_origin_csrf_sessions_and_xss_safe_assets) ... ok
+test_order_binding_rejects_swapped_ciphertext (test_store.StoreTests.test_order_binding_rejects_swapped_ciphertext) ... ok
+test_persistence_no_plaintext_and_server_prices (test_store.StoreTests.test_persistence_no_plaintext_and_server_prices) ... ok
+test_real_denial_observation_not_ui_simulation (test_store.StoreTests.test_real_denial_observation_not_ui_simulation) ... ok
+test_rotation_rewrap_swaps_only_ciphertext_and_preserves_old (test_store.StoreTests.test_rotation_rewrap_swaps_only_ciphertext_and_preserves_old) ... ok
+test_status_transition_and_validation (test_store.StoreTests.test_status_transition_and_validation) ... ok
+test_worker_fixed_key_and_operation (test_store.StoreTests.test_worker_fixed_key_and_operation) ... ok
+
+----------------------------------------------------------------------
+Ran 9 tests in 0.806s
+
+OK

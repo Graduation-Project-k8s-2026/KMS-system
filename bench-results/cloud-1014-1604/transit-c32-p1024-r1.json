@@ -1,0 +1,34 @@
+{
+  "run_id": "36a3111c1f2c5ba8e71921c69df2509f",
+  "state": "succeeded",
+  "job_uid": "e6dddd5e-e939-4257-9ed2-89c84c917413",
+  "spec": {
+    "scenario": "basic",
+    "op": "roundtrip",
+    "count": 2000,
+    "concurrency": 32,
+    "payload_bytes": 1024,
+    "duration_seconds": 0,
+    "mode": "transit"
+  },
+  "result": {
+    "schema_version": 1,
+    "run_id": "36a3111c1f2c5ba8e71921c69df2509f",
+    "mode": "transit",
+    "source_sha": "a41b11ad11ae41df4400b622e9e1a0c5a5ac097f",
+    "image_digest": "docker.io/library/kms-bench@sha256:e125cde53115d74a73e6d55610658c395d65d633390e9f1094037c5cad52c8e9",
+    "client_version": "go1.26.9",
+    "server_version": "a41b11ad11ae-rev2-20261011T020553Z",
+    "tls": true,
+    "auth": "jwt-sar",
+    "retries": 0,
+    "requests": 2000,
+    "success": 2000,
+    "errors": 0,
+    "started_at": "2026-10-14T16:04:43.691489402Z",
+    "ended_at": "2026-10-14T16:04:54.71278806Z",
+    "p50_seconds": 0.12832359,
+    "p95_seconds": 0.475589421,
+    "p99_seconds": 0.704198658
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "result": "PASS",
+  "time_utc": "2026-10-14T13:12:16Z",
+  "scope": "real KMS core + JWT/SAR middleware; simulated Kubernetes SAR; no production access",
+  "production_deployment": "NOT RUN; separate approval required",
+  "browser": true,
+  "checks": [
+    "real Transit encrypt v1; server-side price and customer role enforcement",
+    "customer order isolation",
+    "shipping real Transit decrypt and order status update",
+    "marketing actual HTTP 403 from KMS middleware with simulated SAR backend",
+    "worker authentication failure not reported as a KMS authorization result",
+    "tampered ciphertext rejected by real KMS",
+    "rotation + rewrap persisted v2 + minimum version rejected v1, accepted v2",
+    "isolated seal unavailable and unseal recovery; production KMS untouched",
+    "database reopened; test recipient plaintext absent from SQLite and WAL bytes",
+    "Chromium UI: purchase, shipping, marketing 403, evidence, 390px responsive layout, no JS exceptions"
+  ]
+}

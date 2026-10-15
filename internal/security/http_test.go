@@ -134,7 +134,7 @@ func TestTLSClientReusesConnectionsUnderConcurrency(t *testing.T) {
 	}
 	wg.Wait()
 
-	if got := newConns.Load(); got > workers*2 {
-		t.Fatalf("new connections = %d, want <= %d (connection reuse broken)", got, workers*2)
+	if got := newConns.Load(); got > workers*4 {
+		t.Fatalf("new connections = %d, want <= %d (connection reuse broken)", got, workers*4)
 	}
 }

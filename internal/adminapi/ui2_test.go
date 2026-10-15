@@ -66,7 +66,8 @@ func TestUI2_ServesPagesForAdminAndViewer(t *testing.T) {
 		if w.Code != 200 || !strings.HasPrefix(w.Header().Get("Content-Type"), "text/html") || !strings.Contains(w.Body.String(), "app.js") {
 			t.Fatalf("%s: /v2/ = %d %q", user, w.Code, w.Header().Get("Content-Type"))
 		}
-		for path, prefix := range map[string]string{"/v2/app.js": "text/javascript", "/v2/app.css": "text/css"} {
+		for path, prefix := range map[string]string{"/v2/app.js": "text/javascript", "/v2/app.css": "text/css", "/v2/page-home.js": "text/javascript", "/v2/page-keys.js": "text/javascript",
+			"/v2/page-seal.js": "text/javascript", "/v2/page-ops.js": "text/javascript", "/v2/page-audit.js": "text/javascript", "/v2/boot.js": "text/javascript"} {
 			w := getAs(h, path, user, "127.0.0.1:9", "kms.example.test")
 			if w.Code != 200 || !strings.HasPrefix(w.Header().Get("Content-Type"), prefix) {
 				t.Fatalf("%s %s = %d %q", user, path, w.Code, w.Header().Get("Content-Type"))

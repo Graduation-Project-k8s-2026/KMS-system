@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KMS 관리 콘솔</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand">KMS<span> 관리</span></div>
+    <nav id="nav">
+      <a href="#/dashboard" data-page="dashboard">대시보드</a>
+      <a href="#/keys" data-page="keys">키</a>
+      <a href="#/seal" data-page="seal">봉인</a>
+      <a href="#/ops" data-page="ops">작업(벤치)</a>
+      <a href="#/audit" data-page="audit">감사 로그</a>
+    </nav>
+    <div class="side-foot"><a href="/console" id="legacy-link">← 이전 화면</a></div>
+  </aside>
+  <div class="main">
+    <header class="topbar">
+      <div class="project">Transit KMS <span class="muted">· Kubernetes</span></div>
+      <div class="top-right">
+        <span id="seal-badge" class="pill pill-muted">확인 중…</span>
+        <span id="who" class="who"></span>
+      </div>
+    </header>
+    <main id="view" class="view"></main>
+  </div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

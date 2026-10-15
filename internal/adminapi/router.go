@@ -25,6 +25,9 @@ type Deps struct {
 	// Dashboard: 운영·성능 대시보드(/dashboard, /api/dashboard/*, /api/bench/*).
 	// nil이면 이 경로들을 등록하지 않는다.
 	Dashboard *dashboard.Service
+
+	// DefaultUI: "/"가 보낼 화면. "v2"면 /v2/, 그 외(빈 값 포함)는 기존 /console.
+	DefaultUI string
 }
 
 // NewRouter mounts explicit method/path allowlists. The production entrypoint wraps it with Security and audit middleware.
@@ -70,7 +73,8 @@ func NewRouter(deps Deps) http.Handler {
 	}
 
 	r.Get("/console", handleConsole())
-	r.Get("/", handleHomeRedirect())
+	mountUI2(r)
+	r.Get("/", handleHomeRedirect(deps.DefaultUI))
 
 	return r
 }
@@ -82,8 +86,12 @@ func handleConsole() http.HandlerFunc {
 	}
 }
 
-func handleHomeRedirect() http.HandlerFunc {
+func handleHomeRedirect(defaultUI string) http.HandlerFunc {
+	target := "/console"
+	if defaultUI == UIDefaultV2 {
+		target = "/v2/"
+	}
 	return func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/console", http.StatusFound)
+		http.Redirect(w, r, target, http.StatusFound)
 	}
 }

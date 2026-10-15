@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: kms-ingest
+  namespace: kms-system
+spec:
+  selector:
+    app: kms-admin
+  ports:
+  - name: https
+    port: 8202
+    targetPort: 8202
+  type: ClusterIP

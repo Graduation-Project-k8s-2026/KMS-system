@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sync"
 	"time"
 
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/barrier"
@@ -13,6 +14,9 @@ import (
 
 // keysPrefix: KeyRing을 barrier에 저장할 때 쓰는 key 접두사.
 const keysPrefix = "keys/"
+
+var ErrBackend = errors.New("key backend unavailable")
+var ErrAlreadyExists = errors.New("key already exists")
 
 // keyNameRE: 허용하는 키 이름 형식.
 var keyNameRE = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
@@ -54,12 +58,22 @@ func (e *KeyPolicyError) Is(target error) bool {
 // 담당한다. 모든 데이터는 barrier.Barrier를 통해서만 오가므로, KEK material은
 // Root Key로 암호화된 채로만 storage에 존재한다.
 type KeyManager struct {
-	barrier *barrier.Barrier
+	barrier   *barrier.Barrier
+	locks     sync.Map
+	protected sync.Map
 }
 
 // NewKeyManager는 주어진 Barrier로 KeyManager를 만든다.
 func NewKeyManager(b *barrier.Barrier) *KeyManager {
 	return &KeyManager{barrier: b}
+}
+
+func (m *KeyManager) Protect(name string) { m.protected.Store(name, true) }
+func (m *KeyManager) lock(name string) func() {
+	v, _ := m.locks.LoadOrStore(name, &sync.Mutex{})
+	mu := v.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
 }
 
 // storageKey는 키 이름을 barrier에 저장할 실제 key 문자열로 바꾼다.
@@ -79,13 +93,19 @@ func validateKeyName(name string) error {
 // 도메인 에러인 KeyNotFoundError로 바꿔서 반환한다 — 이 계층 위쪽(transit, api 등)은
 // barrier의 존재를 몰라도 되게, keys 패키지 고유의 에러 타입만 신경 쓰면 된다.
 func (m *KeyManager) loadRing(name string) (*KeyRing, error) {
+	if err := validateKeyName(name); err != nil {
+		return nil, err
+	}
 	var ring KeyRing
 	err := m.barrier.GetJSON(storageKey(name), &ring)
 	if errors.Is(err, barrier.ErrNotFound) {
 		return nil, &KeyNotFoundError{Name: name}
 	}
 	if err != nil {
-		return nil, err
+		if errors.Is(err, barrier.ErrSealed) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("%w: %w", ErrBackend, err)
 	}
 	return &ring, nil
 }
@@ -121,6 +141,7 @@ func newVersion(version int, now time.Time) (KeyVersion, error) {
 // CreateKey는 새 KeyRing을 버전 1 하나로 만든다. 이미 같은 이름이 있으면
 // KeyPolicyError를 반환한다.
 func (m *KeyManager) CreateKey(name string, autoRotatePeriodSec int) (KeyRingMeta, error) {
+	defer m.lock(name)()
 	if err := validateKeyName(name); err != nil {
 		return KeyRingMeta{}, err
 	}
@@ -129,7 +150,7 @@ func (m *KeyManager) CreateKey(name string, autoRotatePeriodSec int) (KeyRingMet
 	}
 
 	if _, err := m.loadRing(name); err == nil {
-		return KeyRingMeta{}, &KeyPolicyError{Msg: fmt.Sprintf("key %q already exists", name)}
+		return KeyRingMeta{}, fmt.Errorf("%w: %w", ErrAlreadyExists, &KeyPolicyError{Msg: fmt.Sprintf("key %q already exists", name)})
 	} else if !errors.Is(err, &KeyNotFoundError{}) {
 		return KeyRingMeta{}, err
 	}
@@ -175,6 +196,7 @@ func (m *KeyManager) ListKeys() ([]string, error) {
 // 남아있다 — min_decryption_version이 그 이상으로 올라가기 전까지는 여전히
 // 복호화에 쓸 수 있어야 하기 때문이다.
 func (m *KeyManager) RotateKey(name string) (KeyRingMeta, error) {
+	defer m.lock(name)()
 	ring, err := m.loadRing(name)
 	if err != nil {
 		return KeyRingMeta{}, err
@@ -199,11 +221,15 @@ func (m *KeyManager) RotateKey(name string) (KeyRingMeta, error) {
 // UpdateConfig는 minDecryptionVersion/autoRotatePeriodSec을 부분적으로 갱신한다.
 // 각 값은 포인터로 받아 nil이면 "변경 안 함"으로 처리한다.
 func (m *KeyManager) UpdateConfig(name string, minDecryptionVersion *int, autoRotatePeriodSec *int) (KeyRingMeta, error) {
+	defer m.lock(name)()
 	ring, err := m.loadRing(name)
 	if err != nil {
 		return KeyRingMeta{}, err
 	}
 
+	if _, protected := m.protected.Load(name); protected && minDecryptionVersion != nil && *minDecryptionVersion != 1 {
+		return KeyRingMeta{}, &KeyPolicyError{Msg: "protected key versions must be retained"}
+	}
 	if minDecryptionVersion != nil {
 		v := *minDecryptionVersion
 		if v < 1 || v > ring.LatestVersion {

@@ -1,0 +1,21 @@
+{
+  "backup_id": "final-kms-v2-20261011T1616Z",
+  "checksum_verified": true,
+  "etcd_snapshot_restored": true,
+  "etcd_control_plane_recovery_verified": true,
+  "revision_bump": 1000000000,
+  "mark_compacted": true,
+  "kms_decrypt_verified": true,
+  "container": "kms-restore-final-v2-drill",
+  "restored_secret_read_count": 2,
+  "public_proofs_verified": 2,
+  "restored_envelope": {
+    "key_id_counts": {
+      "k8s-secrets:2": 2
+    },
+    "secret_count": 2,
+    "status": "PASS"
+  },
+  "scope": "isolated etcd+apiserver+KMS; no restored kubelet/controller-manager/scheduler",
+  "production_data_unchanged": true
+}

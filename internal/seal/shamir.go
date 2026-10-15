@@ -19,7 +19,6 @@
 package seal
 
 import (
-	"bytes"
 	"crypto/rand"
 	"errors"
 	"sync"
@@ -78,14 +77,14 @@ func (s *ShamirSeal) SubmitShare(share []byte) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if len(share) != shamirShareLen {
+	if len(share) != shamirShareLen || share[len(share)-1] == 0 {
 		return len(s.shares), ErrInvalidShareLength
 	}
 	if len(s.shares) >= s.threshold {
 		return len(s.shares), ErrThresholdAlreadyMet
 	}
 	for _, existing := range s.shares {
-		if bytes.Equal(existing, share) {
+		if existing[len(existing)-1] == share[len(share)-1] {
 			return len(s.shares), ErrDuplicateShare
 		}
 	}

@@ -1,0 +1,10 @@
+{
+  "result": "PASS",
+  "scope": "real deployed migration JWT rewrap and shipping JWT decrypt",
+  "original_version": 1,
+  "rewrapped_version": 1,
+  "same_plaintext": true,
+  "stored_ciphertext_preserved": true,
+  "kms_policy_changed": false,
+  "dns_lookup_seconds": 0.0558
+}

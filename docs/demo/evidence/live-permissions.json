@@ -1,0 +1,32 @@
+{
+  "result": "PASS",
+  "scope": "real Kubernetes SubjectAccessReview; all 15 decisions match intended policy",
+  "key": "campus-shipping",
+  "permissions": {
+    "portal": {
+      "encrypt": false,
+      "decrypt": false,
+      "rewrap": false
+    },
+    "checkout": {
+      "encrypt": true,
+      "decrypt": false,
+      "rewrap": false
+    },
+    "shipping": {
+      "encrypt": false,
+      "decrypt": true,
+      "rewrap": false
+    },
+    "marketing": {
+      "encrypt": false,
+      "decrypt": false,
+      "rewrap": false
+    },
+    "migration": {
+      "encrypt": false,
+      "decrypt": false,
+      "rewrap": true
+    }
+  }
+}

@@ -15,10 +15,7 @@ var (
 		"kms_seal_sealed", "barrier가 현재 sealed 상태인지 (1=sealed, 0=unsealed).", nil, nil)
 	sealLastUnsealedDesc = prometheus.NewDesc(
 		"kms_seal_last_unsealed_timestamp_seconds",
-		"이 프로세스가 barrier를 unsealed 상태로 마지막으로 관찰한 시각(Unix epoch 초). "+
-			"한 번도 관찰하지 못했으면 0. barrier.Unseal() 호출 시각이 아니라 "+
-			"이 collector가 스크레이프 시점에 처음 unsealed를 감지한 시각이라, "+
-			"부팅 시 이미 unsealed였다면(KMS_AUTO_UNSEAL 등) 실제 unseal 시각보다 늦을 수 있다.",
+		"실제 barrier unseal 성공 시각(Unix epoch 초), 현재 프로세스에서 아직 없으면 0.",
 		nil, nil)
 	keysTotalDesc = prometheus.NewDesc(
 		"kms_keys_total", "현재 등록된 키 개수.", nil, nil)
@@ -74,6 +71,12 @@ func (c *SealKeyCollector) Collect(ch chan<- prometheus.Metric) {
 	ch <- prometheus.MustNewConstMetric(sealSealedDesc, prometheus.GaugeValue, sealedValue)
 
 	lastUnsealed := c.observeUnsealed(sealed)
+	if actual, ok := c.seal.(interface{ LastUnseal() time.Time }); ok {
+		lastUnsealed = 0
+		if t := actual.LastUnseal(); !t.IsZero() {
+			lastUnsealed = float64(t.Unix())
+		}
+	}
 	ch <- prometheus.MustNewConstMetric(sealLastUnsealedDesc, prometheus.GaugeValue, lastUnsealed)
 
 	// sealed 상태에서는 barrier.GetJSON이 항상 ErrSealed를 반환해 키

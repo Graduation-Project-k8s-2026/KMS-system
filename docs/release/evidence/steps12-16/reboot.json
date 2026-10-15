@@ -1,0 +1,45 @@
+{
+  "status": "PASS",
+  "before_boot_id": "fdaaa659-e186-4509-be55-2192356a474e",
+  "after_boot_id": "8cc20703-c20a-4a53-bdde-76b82bd04bae",
+  "prepared_at": "2026-10-12T00:51:12.921747+00:00",
+  "verified_at": "2026-10-12T00:58:11.049548+00:00",
+  "public_secret_proofs": 2,
+  "old_benchmark_results_preserved": 23,
+  "rpc": {
+    "cancellation": true,
+    "concurrent_decrypt": 16,
+    "deadline": true,
+    "key_id": "k8s-secrets:2",
+    "negative_inputs": true,
+    "previous_fixture": true,
+    "roundtrip": true,
+    "size_limit": true,
+    "status": "PASS",
+    "version": "v2"
+  },
+  "manual_share_wait_included": true,
+  "rto_upper_bound_seconds": 418.127817,
+  "audit_files_preserved": {
+    "core": 2,
+    "admin": 2
+  },
+  "deployments_ready": [
+    "kms-admin",
+    "kms-prometheus"
+  ],
+  "host_services_active": [
+    "containerd",
+    "kubelet",
+    "tailscaled"
+  ],
+  "unseal_timing": {
+    "boot_id": "8cc20703-c20a-4a53-bdde-76b82bd04bae",
+    "started_at": "2026-10-12T00:57:03.242934+00:00",
+    "completed_at": "2026-10-12T00:57:20.928244+00:00",
+    "elapsed_seconds": 17.685293462000004,
+    "unsealed": true
+  },
+  "rto_excluding_measured_share_entry_seconds": 400.442523538,
+  "timing_limit": "Upper bound includes operator reconnection and verification delay; only measured share entry is subtracted."
+}

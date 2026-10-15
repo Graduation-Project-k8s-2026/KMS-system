@@ -1,0 +1,28 @@
+{
+  "recorded_at_utc": "2026-10-12T00:44:47.596284+00:00",
+  "command": "kubeadm certs check-expiration",
+  "exit_code": 0,
+  "report": [
+    "[check-expiration] Reading configuration from the \"kubeadm-config\" ConfigMap in namespace \"kube-system\"...",
+    "[check-expiration] Use 'kubeadm init phase upload-config kubeadm --config your-config-file' to re-upload it.",
+    "",
+    "CERTIFICATE                EXPIRES                  RESIDUAL TIME   CERTIFICATE AUTHORITY   EXTERNALLY MANAGED",
+    "admin.conf                 Oct 10, 2027 15:38 UTC   363d            ca                      no      ",
+    "apiserver                  Oct 10, 2027 15:38 UTC   363d            ca                      no      ",
+    "apiserver-etcd-client      Oct 10, 2027 15:38 UTC   363d            etcd-ca                 no      ",
+    "apiserver-kubelet-client   Oct 10, 2027 15:38 UTC   363d            ca                      no      ",
+    "controller-manager.conf    Oct 10, 2027 15:38 UTC   363d            ca                      no      ",
+    "etcd-healthcheck-client    Oct 10, 2027 15:38 UTC   363d            etcd-ca                 no      ",
+    "etcd-peer                  Oct 10, 2027 15:38 UTC   363d            etcd-ca                 no      ",
+    "etcd-server                Oct 10, 2027 15:38 UTC   363d            etcd-ca                 no      ",
+    "front-proxy-client         Oct 10, 2027 15:38 UTC   363d            front-proxy-ca          no      ",
+    "scheduler.conf             Oct 10, 2027 15:38 UTC   363d            ca                      no      ",
+    "super-admin.conf           Oct 10, 2027 15:38 UTC   363d            ca                      no      ",
+    "",
+    "CERTIFICATE AUTHORITY   EXPIRES                  RESIDUAL TIME   EXTERNALLY MANAGED",
+    "ca                      Oct 07, 2036 15:38 UTC   9y              no      ",
+    "etcd-ca                 Oct 07, 2036 15:38 UTC   9y              no      ",
+    "front-proxy-ca          Oct 07, 2036 15:38 UTC   9y              no      "
+  ],
+  "renewal_performed": false
+}

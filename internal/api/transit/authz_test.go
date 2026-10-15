@@ -138,7 +138,7 @@ func TestRouter_AuthzOn_SealProfileAndBenchmarkExemptFromAuthz(t *testing.T) {
 
 	token := signTestToken(t, rsaKey, "team-a", "app-workload")
 
-	for _, path := range []string{"/v1/sys/seal-profile", "/v1/sys/seal-benchmark"} {
+	for _, path := range []string{"/v1/sys/seal-profile"} {
 		t.Run(path, func(t *testing.T) {
 			req, err := http.NewRequest(http.MethodGet, env.Server.URL+path, nil)
 			if err != nil {

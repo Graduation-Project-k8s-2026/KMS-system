@@ -38,3 +38,20 @@ CLAUDE.md
 
 # 관리 API 대시보드가 저장하는 벤치 결과(ADMIN_API_BENCH_DIR 기본값의 상위)
 /admin-data/
+
+# Python verifier bytecode
+__pycache__/
+
+# Encrypted operator backup download links (never commit operational backups)
+/.backup-download/
+
+# 배포 실제 값·렌더 결과·인증 자료(커밋 금지)
+/deploy/oci-single-node/*.yaml
+/deploy/oci-single-node/*.yml
+/deploy/oci-single-node/*.json
+!/deploy/oci-single-node/release-values.example.json
+/rendered/
+*.key
+*.pem
+*.kubeconfig
+kms-sar.conf

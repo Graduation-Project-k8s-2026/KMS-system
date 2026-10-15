@@ -1,3 +1,5 @@
+//go:build tpm_lab
+
 package seal_test
 
 import (

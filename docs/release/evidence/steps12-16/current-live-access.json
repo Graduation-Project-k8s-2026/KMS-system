@@ -1,0 +1,32 @@
+{
+  "scope": "live trusted-host proxy boundary; identities never output; no role file changes",
+  "viewer_configured": false,
+  "cases": {
+    "authenticated_read": {
+      "observed": 200,
+      "expected": 200,
+      "pass": true
+    },
+    "missing_identity": {
+      "observed": 401,
+      "expected": 401,
+      "pass": true
+    },
+    "wrong_host": {
+      "observed": 403,
+      "expected": 403,
+      "pass": true
+    },
+    "missing_csrf": {
+      "observed": 403,
+      "expected": 403,
+      "pass": true
+    },
+    "unregistered_route": {
+      "observed": 404,
+      "expected": 404,
+      "pass": true
+    }
+  },
+  "status": "PASS"
+}

@@ -58,6 +58,9 @@ func identityFromClaims(c *saClaims) (Identity, error) {
 		namespace, name = ns, n
 	}
 
+	if c.Subject != "" && c.Subject != "system:serviceaccount:"+namespace+":"+name {
+		return Identity{}, ErrUnauthenticated
+	}
 	subject := c.Subject
 	if subject == "" {
 		subject = fmt.Sprintf("system:serviceaccount:%s:%s", namespace, name)

@@ -36,6 +36,11 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) error {
+	for _, a := range args {
+		if a == "--mode" || strings.HasPrefix(a, "--mode=") {
+			return releaseRun(args, stdout, stderr)
+		}
+	}
 	cfg, err := parseFlags(args, stderr)
 	if err != nil {
 		if errors.Is(err, flagHelpRequested) {
@@ -112,7 +117,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		id, err := bench.Submit(submitCtx, &http.Client{Timeout: cfg.Timeout}, cfg.Submit, report)
 		cancel()
 		if err != nil {
-			fmt.Fprintf(stderr, "bench: warning: --submit to %s failed: %v (results above are unaffected)\n", cfg.Submit, err)
+			return fmt.Errorf("result upload failed: %w", err)
 		} else {
 			fmt.Fprintf(stderr, "bench: submitted result %q to %s\n", id, cfg.Submit)
 		}

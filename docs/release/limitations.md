@@ -1,0 +1,16 @@
+# 범위와 남은 제약
+
+최신 실행 상태는 [verification.md](verification.md), 실제 이미지·버전은 [release-lock.json](release-lock.json)이다. §12의 실제 apiserver 연결·전체 현재 Secret 암호화·identity 제거·KEK 회전은 완료했다. 과거 문서의 “KMS 연결 미실행”은 최초 §5.2 작업 당시의 이력이다.
+
+- 사용자 지시로 §10의 데모 앱·추가 시나리오는 보류했고 §18은 작업 지시로 사용하지 않았다. 앱이 실제 배포·시연된 것으로 표시하지 않는다.
+- 단일 노드와 하나의 Boot Volume이다. local PV/PVC는 HA·디스크 장애 격리가 아니다. Flannel 배치만으로 NetworkPolicy 강제를 주장하지 않는다.
+- 호스트 root·커널·메모리 접근 권한은 신뢰 경계 안이다. Root/KEK는 unsealed 프로세스 RAM에 있으며 Go의 완전한 메모리 소거를 보장하지 않는다.
+- Shamir는 기존 share를 가진 사람의 개입이 필요하다. 한 사람이 모든 share를 보관하면 다인 통제가 아니다. 무인 재부팅 복구를 주장하지 않는다.
+- Plugin Job은 강한 KMS UDS 권한을 가진 시험이다. Transit/E2E와 같은 권한으로 간주하지 않는다. 모든 사람에게 hostPath/hostNetwork Pod 생성 권한을 제공하지 않는다.
+- 실제 tailnet 외부/비승인 기기 접속·IPv6 차단·MFA·기기 회수는 사람이 접근 가능한 해당 기기에서 추가 검증해야 한다. 호스트 loopback admin 시험은 사람 로그인 시험이 아니다.
+- TLS/SA 공개키/SAR 인증서는 시작 시 로드한다. 교체에는 계획된 재시작·기존 share 입력이 필요하다. 개별 Transit JWT 즉시 회수·CRL/OCSP·hot reload를 주장하지 않는다. SAR 캐시/토큰 수명에 따른 지연이 있다.
+- 현재 etcd Secret 전체가 KMS v2여도 과거 revision·기존 snapshot에 평문이 남을 수 있다. compaction/defrag/보존 정책과 외부 백업 삭제는 별도다. 이전 KEK를 삭제하지 않는다.
+- 이번 성능 측정은 3회·100왕복·동시성1·1024 bytes의 단일 노드 실험이다. 서비스 공유·운영 조회 간섭이 있으며 일반 환경의 성능 우열로 확장하지 않는다.
+- K8sSeal 측정은 fake client, TPM은 CGO simulator다. 별도 실제 클러스터·실물 TPM의 보안성/지연을 측정한 것이 아니다. 같은 클러스터 Secret을 Root 저장소로 쓰는 순환 의존은 사용하지 않는다.
+- 외부 백업은 암호화 파일을 별도 장치로 옮기고 목적지 hash를 확인해야 완료다. 같은 인스턴스의 `/var/backups` 파일은 외부 백업이 아니다. 이번 최종 묶음은 운영자의 PC 반출·별도 복구 암호 보관·목적지 SHA256 일치 확인을 받았다. 백업 이후의 재부팅 감사 기록과 추가 Transit smoke 결과는 해당 snapshot의 RPO 범위 밖이다.
+- 현재 소스는 미커밋 작업 트리다. 기존 사용자 `cmd/bench/release.go` 변경을 유지했으며 배포된 bench image의 source provenance와 현재 호스트 도구 소스를 혼동하지 않는다.

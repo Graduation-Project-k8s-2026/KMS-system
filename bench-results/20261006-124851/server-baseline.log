@@ -1,0 +1,4 @@
+2026/10/06 12:48:55 authentication is disabled (KMS_AUTHN=off) — all Transit requests are accepted
+2026/10/06 12:48:55 authorization is disabled (KMS_AUTHZ=off) — any authenticated request is accepted
+2026/10/06 12:48:55 kms-system starting: transit=:8200 admin=/home/labyrinth/.kms-bench/bench-admin.sock metrics=:9100 storage=memory seal=dev sealed=true
+2026/10/06 12:49:29 shutdown signal received, shutting down all listeners

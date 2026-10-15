@@ -1,0 +1,14 @@
+{
+  "result": "PASS",
+  "time_utc": "2026-10-15T00:28:15Z",
+  "image": "campus-store:16fa2d472b0b",
+  "public_https": true,
+  "authenticated_status": 200,
+  "public_assets_match_source": {
+    "apps/campus-store/static/app.js": "e30577077e23b67df5147c6736120f30ba4da9a2f338a72ac9a224c133295160",
+    "apps/campus-store/static/index.html": "43d77573f4f29c94c4509033d78a5fa9c076b97cd7b255f854f73998f1c0522f"
+  },
+  "ready_deployments": 5,
+  "edge_service": "active",
+  "legacy_private_store_route_removed": true
+}

@@ -8,6 +8,7 @@ package admin
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -35,6 +36,9 @@ type Deps struct {
 	// ShamirParts/ShamirThreshold: Seal.Type() == "shamir"일 때만 의미가
 	// 있다. main.go가 ShamirSeal을 만들 때 정한 값을 그대로 받아, InitShamir
 	// 호출과 진행 상황("2/3") 표시에 쓴다.
+	OnUnseal        func() error
+	OnSeal          func()
+	ReservedKey     string
 	ShamirParts     int
 	ShamirThreshold int
 }
@@ -44,6 +48,18 @@ type Deps struct {
 // internal/api/transit.NewRouter가 별도로 제공한다.
 func NewRouter(deps Deps) http.Handler {
 	r := chi.NewRouter()
+	var lifecycle sync.Mutex
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Cache-Control", "no-store")
+			r.Body = http.MaxBytesReader(w, r.Body, 2<<20)
+			if r.URL.Path == "/v1/sys/init" || r.URL.Path == "/v1/sys/unseal" || r.URL.Path == "/v1/sys/seal" {
+				lifecycle.Lock()
+				defer lifecycle.Unlock()
+			}
+			next.ServeHTTP(w, r)
+		})
+	})
 
 	// shamirProgress는 "지금까지 몇 개의 조각이 제출됐는지"를 GET
 	// seal-status에서도 보여주기 위한 상태다. ShamirSeal 자체는 이 숫자를
@@ -58,6 +74,17 @@ func NewRouter(deps Deps) http.Handler {
 	r.Route("/v1/sys", func(r chi.Router) {
 		r.Get("/seal-status", handleSealStatus(deps, progress))
 		r.Post("/init", handleInit(deps))
+		r.Post("/seal", func(w http.ResponseWriter, r *http.Request) {
+			if deps.OnSeal != nil {
+				deps.OnSeal()
+			}
+			deps.Barrier.Seal()
+			if s, ok := deps.Seal.(*seal.ShamirSeal); ok {
+				s.Reset()
+			}
+			progress.set(0)
+			httputil.WriteJSON(w, 200, map[string]bool{"sealed": true})
+		})
 		r.Post("/unseal", handleUnseal(deps, progress))
 	})
 
@@ -81,8 +108,10 @@ func NewRouter(deps Deps) http.Handler {
 // ---- 요청/응답 타입 ----
 
 type sealStatusResponse struct {
-	Sealed   bool   `json:"sealed"`
-	SealType string `json:"seal_type"`
+	Initialized       bool   `json:"initialized"`
+	MigrationRequired bool   `json:"migration_required"`
+	Sealed            bool   `json:"sealed"`
+	SealType          string `json:"seal_type"`
 	// Progress: sealed=true이고 seal_type이 "shamir"일 때만 채워진다.
 	// "1/3" 형태로 지금까지 제출된 조각 수/threshold를 보여준다.
 	Progress string `json:"progress,omitempty"`
@@ -149,7 +178,13 @@ type updateConfigRequest struct {
 
 func handleSealStatus(deps Deps, progress *shamirProgress) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		initialized, migration, err := deps.Barrier.InitializationStatus()
+		if err != nil {
+			httputil.WriteJSONError(w, 503, "storage unavailable")
+			return
+		}
 		resp := sealStatusResponse{
+			Initialized: initialized, MigrationRequired: migration,
 			Sealed:   deps.Barrier.IsSealed(),
 			SealType: deps.Barrier.SealType(),
 		}
@@ -185,7 +220,11 @@ func handleInit(deps Deps) http.HandlerFunc {
 		switch sealer := deps.Seal.(type) {
 		case *seal.DevSeal:
 			if err := deps.Barrier.Unseal(); err != nil {
-				httputil.WriteError(w, err, http.StatusInternalServerError)
+				if errors.Is(err, barrier.ErrInitialized) {
+					httputil.WriteJSONError(w, 409, "already initialized")
+				} else {
+					httputil.WriteError(w, err, http.StatusServiceUnavailable)
+				}
 				return
 			}
 			httputil.WriteJSON(w, http.StatusOK, initResponse{
@@ -194,12 +233,21 @@ func handleInit(deps Deps) http.HandlerFunc {
 			})
 
 		case *seal.ShamirSeal:
-			_, shares, err := seal.InitShamir(deps.ShamirParts, deps.ShamirThreshold)
+			shares, err := deps.Barrier.Initialize(deps.ShamirParts, deps.ShamirThreshold)
 			if err != nil {
-				httputil.WriteError(w, err, http.StatusInternalServerError)
+				if errors.Is(err, barrier.ErrInitialized) {
+					httputil.WriteJSONError(w, 409, "already initialized")
+				} else {
+					httputil.WriteError(w, err, http.StatusServiceUnavailable)
+				}
 				return
 			}
 			encoded := make([]string, len(shares))
+			defer func() {
+				for _, s := range shares {
+					clear(s)
+				}
+			}()
 			for i, share := range shares {
 				encoded[i] = base64.StdEncoding.EncodeToString(share)
 			}
@@ -215,7 +263,11 @@ func handleInit(deps Deps) http.HandlerFunc {
 
 		case *seal.TPMSeal:
 			if _, err := sealer.InitTPM(); err != nil {
-				httputil.WriteError(w, err, http.StatusInternalServerError)
+				if errors.Is(err, barrier.ErrInitialized) {
+					httputil.WriteJSONError(w, 409, "already initialized")
+				} else {
+					httputil.WriteError(w, err, http.StatusServiceUnavailable)
+				}
 				return
 			}
 			httputil.WriteJSON(w, http.StatusCreated, initResponse{
@@ -225,7 +277,11 @@ func handleInit(deps Deps) http.HandlerFunc {
 
 		case *seal.K8sSeal:
 			if _, err := sealer.InitK8s(r.Context()); err != nil {
-				httputil.WriteError(w, err, http.StatusInternalServerError)
+				if errors.Is(err, barrier.ErrInitialized) {
+					httputil.WriteJSONError(w, 409, "already initialized")
+				} else {
+					httputil.WriteError(w, err, http.StatusServiceUnavailable)
+				}
 				return
 			}
 			httputil.WriteJSON(w, http.StatusCreated, initResponse{
@@ -249,6 +305,13 @@ func handleInit(deps Deps) http.HandlerFunc {
 func handleUnseal(deps Deps, progress *shamirProgress) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !deps.Barrier.IsSealed() {
+			if deps.OnUnseal != nil {
+				if err := deps.OnUnseal(); err != nil {
+					deps.Barrier.Seal()
+					httputil.WriteJSONError(w, 503, "unseal lifecycle failed")
+					return
+				}
+			}
 			httputil.WriteJSON(w, http.StatusOK, unsealResponse{Sealed: false})
 			return
 		}
@@ -257,8 +320,19 @@ func handleUnseal(deps Deps, progress *shamirProgress) http.HandlerFunc {
 		if !isShamir {
 			// dev/tpm/k8s: 한 번의 Unseal 호출로 끝난다. body는 아예 안 쓴다.
 			if err := deps.Barrier.Unseal(); err != nil {
-				httputil.WriteError(w, err, http.StatusInternalServerError)
+				if errors.Is(err, barrier.ErrInitialized) {
+					httputil.WriteJSONError(w, 409, "already initialized")
+				} else {
+					httputil.WriteError(w, err, http.StatusServiceUnavailable)
+				}
 				return
+			}
+			if deps.OnUnseal != nil {
+				if err := deps.OnUnseal(); err != nil {
+					deps.Barrier.Seal()
+					httputil.WriteJSONError(w, 503, "unseal lifecycle failed")
+					return
+				}
 			}
 			httputil.WriteJSON(w, http.StatusOK, unsealResponse{Sealed: false})
 			return
@@ -296,8 +370,20 @@ func handleUnseal(deps Deps, progress *shamirProgress) http.HandlerFunc {
 		// threshold에 막 도달한 순간 — barrier.Unseal()이 내부적으로
 		// sealer.Unseal()(shamir.Combine)을 호출해 Root Key를 복원한다.
 		if err := deps.Barrier.Unseal(); err != nil {
-			httputil.WriteError(w, err, http.StatusInternalServerError)
+			progress.set(0)
+			if errors.Is(err, barrier.ErrInitialized) {
+				httputil.WriteJSONError(w, 409, "already initialized")
+			} else {
+				httputil.WriteError(w, err, http.StatusServiceUnavailable)
+			}
 			return
+		}
+		if deps.OnUnseal != nil {
+			if err := deps.OnUnseal(); err != nil {
+				deps.Barrier.Seal()
+				httputil.WriteJSONError(w, 503, "unseal lifecycle failed")
+				return
+			}
 		}
 		httputil.WriteJSON(w, http.StatusOK, unsealResponse{Sealed: false})
 	}
@@ -320,7 +406,11 @@ func handleCreateKey(deps Deps) http.HandlerFunc {
 
 		meta, err := deps.Keys.CreateKey(req.Name, autoRotate)
 		if err != nil {
-			httputil.WriteError(w, err, http.StatusInternalServerError)
+			if errors.Is(err, barrier.ErrInitialized) {
+				httputil.WriteJSONError(w, 409, "already initialized")
+			} else {
+				httputil.WriteError(w, err, http.StatusServiceUnavailable)
+			}
 			return
 		}
 		httputil.WriteJSON(w, http.StatusCreated, meta)
@@ -331,7 +421,11 @@ func handleListKeys(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		names, err := deps.Keys.ListKeys()
 		if err != nil {
-			httputil.WriteError(w, err, http.StatusInternalServerError)
+			if errors.Is(err, barrier.ErrInitialized) {
+				httputil.WriteJSONError(w, 409, "already initialized")
+			} else {
+				httputil.WriteError(w, err, http.StatusServiceUnavailable)
+			}
 			return
 		}
 		if names == nil {
@@ -347,7 +441,11 @@ func handleGetKey(deps Deps) http.HandlerFunc {
 
 		meta, err := deps.Keys.GetKeyMeta(name)
 		if err != nil {
-			httputil.WriteError(w, err, http.StatusInternalServerError)
+			if errors.Is(err, barrier.ErrInitialized) {
+				httputil.WriteJSONError(w, 409, "already initialized")
+			} else {
+				httputil.WriteError(w, err, http.StatusServiceUnavailable)
+			}
 			return
 		}
 		httputil.WriteJSON(w, http.StatusOK, meta)
@@ -360,7 +458,11 @@ func handleRotateKey(deps Deps) http.HandlerFunc {
 
 		meta, err := deps.Keys.RotateKey(name)
 		if err != nil {
-			httputil.WriteError(w, err, http.StatusInternalServerError)
+			if errors.Is(err, barrier.ErrInitialized) {
+				httputil.WriteJSONError(w, 409, "already initialized")
+			} else {
+				httputil.WriteError(w, err, http.StatusServiceUnavailable)
+			}
 			return
 		}
 		httputil.WriteJSON(w, http.StatusOK, meta)
@@ -379,7 +481,11 @@ func handleUpdateConfig(deps Deps) http.HandlerFunc {
 
 		meta, err := deps.Keys.UpdateConfig(name, req.MinDecryptionVersion, req.AutoRotatePeriodSec)
 		if err != nil {
-			httputil.WriteError(w, err, http.StatusInternalServerError)
+			if errors.Is(err, barrier.ErrInitialized) {
+				httputil.WriteJSONError(w, 409, "already initialized")
+			} else {
+				httputil.WriteError(w, err, http.StatusServiceUnavailable)
+			}
 			return
 		}
 		httputil.WriteJSON(w, http.StatusOK, meta)

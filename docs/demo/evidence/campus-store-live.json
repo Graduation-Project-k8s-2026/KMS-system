@@ -1,0 +1,53 @@
+{
+  "result": "PASS",
+  "scope": "deployed portal + real workers + real KMS + real Kubernetes SAR",
+  "browser_identity_scope": "trusted host loopback with synthetic proxy header; not a person tailnet login",
+  "key_policy_changes": false,
+  "kms_seal_or_restart": false,
+  "namespace": "campus-store",
+  "image": "campus-store:99ab3f34be6a",
+  "checks": [
+    "portal rejected loopback request without trusted proxy identity",
+    "real Transit encrypt persisted two fictional orders; customer isolation and role denial verified",
+    "real shipping JWT decrypt returned matching fictional recipients and shipping state persisted",
+    "marketing real KMS + Kubernetes SAR denied decrypt with HTTP 403; aggregate sales still available",
+    "actual stored ciphertext visible in presenter view; tampered copy rejected with HTTP 400",
+    "fictional recipient plaintext absent from actual SQLite/WAL files",
+    "Portal Pod replaced; same order IDs and recipient decrypt survived PVC-backed restart",
+    "all five deployments ready; /store route added; original admin root route preserved"
+  ],
+  "https_host_self_access": {
+    "/store/": {
+      "status": 401,
+      "system_ca_and_hostname_verified": true
+    },
+    "/": {
+      "status": 401,
+      "system_ca_and_hostname_verified": true
+    }
+  },
+  "orders": [
+    {
+      "id": "CS-59C6BDDD62",
+      "version": 1
+    },
+    {
+      "id": "CS-ED2A3B35A3",
+      "version": 1
+    }
+  ],
+  "database_scan": {
+    "plaintext_absent": true,
+    "files_checked": 1
+  },
+  "deployments": {
+    "checkout": 1,
+    "marketing": 1,
+    "migration": 1,
+    "portal": 1,
+    "shipping": 1
+  },
+  "time_utc": "2026-10-14T13:34:37Z",
+  "external_allowed_and_denied_device_test": "NOT RUN",
+  "rotation_rewrap_minimum_version": "isolated evidence only; production key policies unchanged"
+}

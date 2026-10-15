@@ -1,0 +1,29 @@
+[Unit]
+Description=Campus Store public demo HTTPS entrance
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=10001
+Group=10001
+Environment=HOME=/var/lib/campus-store-edge
+WorkingDirectory=/var/lib/campus-store-edge
+ExecStart=/usr/bin/python3 -B /usr/local/libexec/campus-store-edge/public_edge.py
+Restart=always
+RestartSec=5
+TimeoutStopSec=15
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+ReadWritePaths=/var/lib/campus-store-edge
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,72 @@
+{
+  "recorded_at_utc": "2026-10-12T00:56:44.148424+00:00",
+  "boot_id": "8cc20703-c20a-4a53-bdde-76b82bd04bae",
+  "kms_sealed": true,
+  "pods": [
+    {
+      "namespace": "kms-system",
+      "name": "kms-admin-6b47b4465-p54s4",
+      "phase": "Running",
+      "containers": [
+        {
+          "name": "admin",
+          "ready": true,
+          "restart_count": 1,
+          "state": "running"
+        }
+      ]
+    },
+    {
+      "namespace": "kms-system",
+      "name": "kms-prometheus-5855f64f4-72mnn",
+      "phase": "Running",
+      "containers": [
+        {
+          "name": "prometheus",
+          "ready": true,
+          "restart_count": 1,
+          "state": "running"
+        }
+      ]
+    },
+    {
+      "namespace": "kube-system",
+      "name": "etcd-kms-vnic",
+      "phase": "Running",
+      "containers": [
+        {
+          "name": "etcd",
+          "ready": true,
+          "restart_count": 1,
+          "state": "running"
+        }
+      ]
+    },
+    {
+      "namespace": "kube-system",
+      "name": "kms-core-kms-vnic",
+      "phase": "Running",
+      "containers": [
+        {
+          "name": "kms",
+          "ready": true,
+          "restart_count": 1,
+          "state": "running"
+        }
+      ]
+    },
+    {
+      "namespace": "kube-system",
+      "name": "kube-apiserver-kms-vnic",
+      "phase": "Running",
+      "containers": [
+        {
+          "name": "kube-apiserver",
+          "ready": false,
+          "restart_count": 1,
+          "state": "running"
+        }
+      ]
+    }
+  ]
+}

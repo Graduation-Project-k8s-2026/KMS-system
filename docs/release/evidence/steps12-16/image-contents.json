@@ -1,0 +1,26 @@
+{
+  "kms-server": {
+    "binaries": [
+      "server"
+    ],
+    "architecture": "arm64",
+    "user": "10001:10001",
+    "manifest_digest": "sha256:0180ec88834456a04b672e04fbf30ad266064a58e0cf77e66de355fe7a8ea08d"
+  },
+  "kms-admin-api": {
+    "binaries": [
+      "admin-api"
+    ],
+    "architecture": "arm64",
+    "user": "10001:10001",
+    "manifest_digest": "sha256:49f6755162575ccf6852be241017160f7a2ea534300da482abdb3db44c56b580"
+  },
+  "kms-bench": {
+    "binaries": [
+      "bench"
+    ],
+    "architecture": "arm64",
+    "user": "10001:10001",
+    "manifest_digest": "sha256:e125cde53115d74a73e6d55610658c395d65d633390e9f1094037c5cad52c8e9"
+  }
+}

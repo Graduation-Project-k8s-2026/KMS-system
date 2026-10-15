@@ -137,3 +137,26 @@ func TestGetenvDurationSecondsDefault_AcceptsNegative(t *testing.T) {
 		t.Fatalf("getenvDurationSecondsDefault = %v, want %v", got, want)
 	}
 }
+
+func TestSocketDoesNotRemoveActiveOrRegularFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "admin.sock")
+	if err := os.WriteFile(path, []byte("existing file"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := listenUnixSocket(path); err == nil {
+		t.Fatal("removed regular file")
+	}
+	b, _ := os.ReadFile(path)
+	if string(b) != "existing file" {
+		t.Fatal("file modified")
+	}
+	os.Remove(path)
+	l, err := listenUnixSocket(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	if _, err = listenUnixSocket(path); err == nil {
+		t.Fatal("removed live socket")
+	}
+}

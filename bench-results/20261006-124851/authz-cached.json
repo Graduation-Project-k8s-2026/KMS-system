@@ -1,0 +1,89 @@
+{
+  "label": "authz-cached",
+  "timestamp": "2026-10-06T12:50:09.654666277+09:00",
+  "addr": "http://localhost:8200",
+  "key": "demo",
+  "environment": {
+    "go_version": "go1.23.4",
+    "gomaxprocs": 20,
+    "os": "linux",
+    "arch": "amd64"
+  },
+  "runs": [
+    {
+      "scenario": "concurrency",
+      "operation": "encrypt",
+      "payload_bytes": 1024,
+      "concurrency": 1,
+      "count": 1000,
+      "duration_requested_seconds": 10,
+      "warmup": 20,
+      "keepalive": true,
+      "started_at": "2026-10-06T12:50:09.659507973+09:00",
+      "ended_at": "2026-10-06T12:50:19.659588464+09:00",
+      "wall_time_seconds": 10.000080497,
+      "ops_per_sec": 5045.159387980474,
+      "success_count": 50452,
+      "error_count": 0,
+      "latency": {
+        "min_seconds": 0.000107085,
+        "mean_seconds": 0.000186107,
+        "p50_seconds": 0.000175077,
+        "p90_seconds": 0.000214057,
+        "p95_seconds": 0.000236844,
+        "p99_seconds": 0.00048749,
+        "max_seconds": 0.003417426
+      }
+    },
+    {
+      "scenario": "concurrency",
+      "operation": "encrypt",
+      "payload_bytes": 1024,
+      "concurrency": 10,
+      "count": 1000,
+      "duration_requested_seconds": 10,
+      "warmup": 20,
+      "keepalive": true,
+      "started_at": "2026-10-06T12:50:19.668304386+09:00",
+      "ended_at": "2026-10-06T12:50:32.651298975+09:00",
+      "wall_time_seconds": 10.00031213,
+      "ops_per_sec": 16758.37692078117,
+      "success_count": 167589,
+      "error_count": 0,
+      "latency": {
+        "min_seconds": 0.000079541,
+        "mean_seconds": 0.000566075,
+        "p50_seconds": 0.000512687,
+        "p90_seconds": 0.000948049,
+        "p95_seconds": 0.001081397,
+        "p99_seconds": 0.001407264,
+        "max_seconds": 0.003637179
+      }
+    },
+    {
+      "scenario": "concurrency",
+      "operation": "encrypt",
+      "payload_bytes": 1024,
+      "concurrency": 50,
+      "count": 1000,
+      "duration_requested_seconds": 10,
+      "warmup": 20,
+      "keepalive": true,
+      "started_at": "2026-10-06T12:50:32.676345013+09:00",
+      "ended_at": "2026-10-06T12:50:42.678131471+09:00",
+      "wall_time_seconds": 10.00178647,
+      "ops_per_sec": 19867.950650220188,
+      "success_count": 198715,
+      "error_count": 0,
+      "latency": {
+        "min_seconds": 0.000093407,
+        "mean_seconds": 0.002438322,
+        "p50_seconds": 0.002158342,
+        "p90_seconds": 0.004604519,
+        "p95_seconds": 0.005397432,
+        "p99_seconds": 0.007187332,
+        "max_seconds": 0.014203682
+      }
+    }
+  ]
+}

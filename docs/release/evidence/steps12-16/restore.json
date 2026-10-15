@@ -1,0 +1,11 @@
+{
+  "backup_id": "pre-kms-v2-20261011T1610Z",
+  "checksum_verified": true,
+  "etcd_snapshot_restored": true,
+  "etcd_control_plane_recovery_verified": false,
+  "revision_bump": 1000000000,
+  "mark_compacted": true,
+  "kms_decrypt_verified": true,
+  "container": "kms-restore-pre-v2-drill",
+  "verified_at": "2026-10-11T16:10:38.936002+00:00"
+}

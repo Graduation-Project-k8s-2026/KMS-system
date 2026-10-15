@@ -359,7 +359,8 @@ async function api(method, path, body) {
     opts.headers['Content-Type'] = 'application/json';
     opts.body = JSON.stringify(body);
   }
-  const res = await fetch(path, opts);
+  if(opts.method && opts.method!=='GET'){const session=await fetch('/api/session').then(r=>r.json());opts.headers={...opts.headers,'X-CSRF-Token':session.csrf_token};}
+ const res = await fetch(path, opts);
   let data = null;
   try { data = await res.json(); } catch (e) { /* 본문 없음 */ }
   return { ok: res.ok, status: res.status, data };

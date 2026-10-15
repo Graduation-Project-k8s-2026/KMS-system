@@ -1,0 +1,130 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kms-core
+  namespace: kube-system
+  labels:
+    app: kms-core
+spec:
+  hostNetwork: true
+  dnsPolicy: ClusterFirstWithHostNet
+  terminationGracePeriodSeconds: 30
+  securityContext:
+    runAsUser: 10001
+    runAsGroup: 10001
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+  - name: kms
+    image: ${SERVER_IMAGE}
+    imagePullPolicy: Never
+    command:
+    - /usr/local/bin/server
+    env:
+    - name: KMS_STORAGE
+      value: file
+    - name: KMS_DATA_DIR
+      value: /data
+    - name: KMS_SEAL_TYPE
+      value: shamir
+    - name: KMS_SHAMIR_PARTS
+      value: '5'
+    - name: KMS_SHAMIR_THRESHOLD
+      value: '3'
+    - name: KMS_AUTO_UNSEAL
+      value: 'false'
+    - name: KMS_ADMIN_SOCKET
+      value: /run/kms-admin/admin.sock
+    - name: KMS_V2_SOCKET
+      value: /run/kms-v2/kms-v2.sock
+    - name: KMS_V2_KEY_NAME
+      value: k8s-secrets
+    - name: KMS_TRANSIT_ADDR
+      value: ${NODE_IP}:8200
+    - name: KMS_TRANSIT_TLS_CERT
+      value: /etc/transit-tls/tls.crt
+    - name: KMS_TRANSIT_TLS_KEY
+      value: /etc/transit-tls/tls.key
+    - name: KMS_METRICS_ADDR
+      value: 127.0.0.1:9100
+    - name: KMS_AUTHN
+      value: 'on'
+    - name: KMS_AUTHZ
+      value: 'on'
+    - name: KMS_SA_PUBLIC_KEY
+      value: /etc/kms-sa/sa.pub
+    - name: KMS_SA_ISSUER
+      value: ${SA_ISSUER}
+    - name: KMS_SA_AUDIENCE
+      value: kms-system
+    - name: KMS_KUBECONFIG
+      value: /etc/kms-sar/kms-sar.conf
+    - name: KMS_AUTHZ_CACHE_TTL
+      value: '10'
+    - name: KMS_AUTHZ_TIMEOUT
+      value: '3'
+    - name: KMS_AUTHZ_FAIL_OPEN
+      value: 'false'
+    - name: KMS_AUDIT_DIR
+      value: /core-audit
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop:
+        - ALL
+    resources:
+      requests:
+        cpu: 250m
+        memory: 256Mi
+      limits:
+        memory: 1Gi
+    volumeMounts:
+    - name: keys
+      mountPath: /data
+    - name: admin-socket
+      mountPath: /run/kms-admin
+    - name: v2-socket
+      mountPath: /run/kms-v2
+    - name: tls
+      mountPath: /etc/transit-tls
+      readOnly: true
+    - name: sa-public
+      mountPath: /etc/kms-sa/sa.pub
+      readOnly: true
+    - name: sar
+      mountPath: /etc/kms-sar/kms-sar.conf
+      readOnly: true
+    - name: core-audit
+      mountPath: /core-audit
+  volumes:
+  - name: keys
+    hostPath:
+      path: /var/lib/custom-kms/keys
+      type: Directory
+  - name: admin-socket
+    hostPath:
+      path: /run/custom-kms/admin
+      type: Directory
+  - name: v2-socket
+    hostPath:
+      path: /run/custom-kms/kmsv2
+      type: Directory
+  - name: tls
+    hostPath:
+      path: /etc/custom-kms/transit-tls
+      type: Directory
+  - name: sa-public
+    hostPath:
+      path: /etc/custom-kms/sa.pub
+      type: File
+  - name: sar
+    hostPath:
+      path: /etc/custom-kms/kms-sar.conf
+      type: File
+  - name: core-audit
+    hostPath:
+      path: /var/lib/custom-kms/core-audit
+      type: Directory
+  automountServiceAccountToken: false

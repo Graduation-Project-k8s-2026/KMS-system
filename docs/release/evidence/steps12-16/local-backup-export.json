@@ -1,0 +1,11 @@
+{
+  "backup_id": "final-kms-v2-20261011T1616Z",
+  "archive": ".backup-download/kms-final-v2-auto.tar.gpg",
+  "bytes": 344772939,
+  "sha256": "4807a4c3b157642de7b26c6f4c5401dd601a92b1e73d58a1f999acef5ba5d35b",
+  "decrypted_members_verified": 15,
+  "encrypted": true,
+  "password_stored_outside_repository": true,
+  "external_transfer_verified": true,
+  "external_verification_evidence": "external-backup.json"
+}

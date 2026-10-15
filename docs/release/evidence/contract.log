@@ -1,0 +1,12 @@
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/cmd/server	0.148s
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/cmd/admin-api	0.078s
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/cmd/bench	0.135s
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/adminapi	0.092s
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/jobs	0.202s
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/security	0.063s
+ok  	github.com/Graduation-Project-k8s-2026/KMS-system/internal/demo	0.024s
+.....
+----------------------------------------------------------------------
+Ran 5 tests in 0.116s
+
+OK

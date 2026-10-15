@@ -29,7 +29,12 @@ func Middleware(a *Authorizer, verb string) func(http.Handler) http.Handler {
 			}
 
 			name := chi.URLParam(r, "name")
-			if !a.Allowed(r.Context(), identity, name, verb) {
+			allowed, err := a.Check(r.Context(), identity, name, verb)
+			if err != nil {
+				httputil.WriteJSONError(w, http.StatusServiceUnavailable, "authorization backend unavailable")
+				return
+			}
+			if !allowed {
 				httputil.WriteJSONError(w, http.StatusForbidden, "forbidden")
 				return
 			}

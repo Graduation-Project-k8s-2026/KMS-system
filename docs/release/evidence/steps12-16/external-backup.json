@@ -1,0 +1,11 @@
+{
+  "recorded_at_utc": "2026-10-12T00:49:03.372026+00:00",
+  "backup_id": "final-kms-v2-20261011T1616Z",
+  "archive": "kms-final-v2-auto.tar.gpg",
+  "expected_sha256": "4807a4c3b157642de7b26c6f4c5401dd601a92b1e73d58a1f999acef5ba5d35b",
+  "pc_archive_downloaded_user_reported": true,
+  "recovery_password_stored_separately_user_reported": true,
+  "destination_checksum_verified": true,
+  "verification_method": "Operator confirmed local PC Get-FileHash SHA256 equals the expected archive digest; archive and recovery password stored separately.",
+  "verified_at_utc": "2026-10-12T00:51:12.696877+00:00"
+}

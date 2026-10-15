@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"time"
 )
 
 // NewSocketProxy는 들어온 요청을 해석하지 않고 그대로 admin.sock으로
@@ -26,12 +27,16 @@ import (
 // 않는다.
 func NewSocketProxy(socketPath string) http.Handler {
 	dial := func(ctx context.Context, _, _ string) (net.Conn, error) {
-		var d net.Dialer
+		d := net.Dialer{Timeout: 3 * time.Second}
 		return d.DialContext(ctx, "unix", socketPath)
 	}
 
 	return &httputil.ReverseProxy{
-		Transport: &http.Transport{DialContext: dial},
+		Transport: &http.Transport{DialContext: dial, ResponseHeaderTimeout: 10 * time.Second, IdleConnTimeout: 60 * time.Second},
+		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, _ error) {
+			w.Header().Set("Cache-Control", "no-store")
+			http.Error(w, "management backend unavailable", http.StatusServiceUnavailable)
+		},
 		Director: func(req *http.Request) {
 			req.URL.Scheme = "http"
 			req.URL.Host = "admin.sock"

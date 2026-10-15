@@ -1,0 +1,67 @@
+ M .github/workflows/ci.yml
+ M .gitignore
+ M cmd/admin-api/main.go
+ M cmd/admin-api/main_test.go
+ M cmd/bench/main.go
+ M cmd/bench/main_test.go
+ M cmd/server/authz_test.go
+ M cmd/server/main.go
+ M cmd/server/main_test.go
+ M cmd/server/metrics_test.go
+ M go.mod
+ M go.sum
+ M internal/adminapi/proxy.go
+ M internal/adminapi/router.go
+ M internal/api/admin/admin.go
+ M internal/api/console/console.html
+ M internal/api/httputil/httputil.go
+ M internal/api/transit/authz_test.go
+ M internal/api/transit/transit.go
+ M internal/api/transit/transit_test.go
+ M internal/authn/claims.go
+ M internal/authn/middleware.go
+ M internal/authn/verifier.go
+ M internal/authz/authorizer.go
+ M internal/authz/middleware.go
+ M internal/authz/middleware_test.go
+ M internal/barrier/barrier.go
+ M internal/keys/manager.go
+ M internal/metrics/collector.go
+ M internal/rotation/scheduler.go
+ M internal/seal/benchmark.go
+ M internal/seal/benchmark_test.go
+ M internal/seal/shamir.go
+ M internal/seal/tpm_test.go
+ M internal/storage/file.go
+?? cmd/bench/release.go
+?? cmd/bench/release_test.go
+?? cmd/demo-app/
+?? cmd/server/offline_test.go
+?? deploy/
+?? docs/release/
+?? docs/review/
+?? internal/adminapi/operations.go
+?? internal/adminapi/operations.html
+?? internal/adminapi/security.go
+?? internal/adminapi/security_test.go
+?? internal/api/admin/lifecycle_test.go
+?? internal/api/transit/backend_test.go
+?? internal/audit/
+?? internal/barrier/initialization.go
+?? internal/barrier/initialization_test.go
+?? internal/demo/
+?? internal/jobs/
+?? internal/keys/concurrency_test.go
+?? internal/kmsv2/
+?? internal/metrics/http.go
+?? internal/metrics/http_test.go
+?? internal/security/
+?? internal/storage/durability_test.go
+?? scripts/create-bench-fixture.py
+?? scripts/create-bench-fixture.sh
+?? scripts/render-release.py
+?? scripts/rewrite-secrets.py
+?? scripts/test-kmsv2.sh
+?? scripts/test_release.py
+?? scripts/verify-etcd-encryption.py
+?? scripts/verify-release-contract.sh

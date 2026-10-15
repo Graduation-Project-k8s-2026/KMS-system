@@ -1,0 +1,38 @@
+{
+  "run_id": "ecdc743b13c2aa79bb0664cfaf3abf64",
+  "state": "succeeded",
+  "job_uid": "b432979e-d8c0-491c-8e9b-b8e94133b133",
+  "spec": {
+    "scenario": "basic",
+    "op": "roundtrip",
+    "count": 100,
+    "concurrency": 1,
+    "payload_bytes": 1024,
+    "duration_seconds": 0,
+    "mode": "plugin"
+  },
+  "result": {
+    "schema_version": 1,
+    "run_id": "ecdc743b13c2aa79bb0664cfaf3abf64",
+    "mode": "plugin",
+    "source_sha": "a41b11ad11ae41df4400b622e9e1a0c5a5ac097f",
+    "image_digest": "docker.io/library/kms-bench@sha256:e125cde53115d74a73e6d55610658c395d65d633390e9f1094037c5cad52c8e9",
+    "client_version": "go1.26.9",
+    "server_version": "a41b11ad11ae-rev2-20261011T020553Z",
+    "tls": false,
+    "auth": "uds",
+    "retries": 0,
+    "requests": 100,
+    "success": 100,
+    "errors": 0,
+    "started_at": "2026-10-11T16:08:03.197804824Z",
+    "ended_at": "2026-10-11T16:08:03.250350463Z",
+    "p50_seconds": 0.000486522,
+    "p95_seconds": 0.000758323,
+    "p99_seconds": 0.001177405
+  },
+  "iteration": 2,
+  "encryption_provider": "identity",
+  "access": "trusted-host-loopback-not-tailnet-login",
+  "recorded_at": "2026-10-11T16:08:08.712406+00:00"
+}

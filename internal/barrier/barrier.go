@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sync"
+	"time"
 
 	kmscrypto "github.com/Graduation-Project-k8s-2026/KMS-system/internal/crypto"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/seal"
@@ -33,8 +34,9 @@ type Barrier struct {
 	sealer seal.Seal
 
 	// mu는 rootKey를 여러 goroutine(HTTP 요청)이 동시에 읽고 쓸 때의 경합을 막는다.
-	mu      sync.Mutex
-	rootKey []byte // nil이면 sealed 상태
+	mu         sync.Mutex
+	lastUnseal time.Time
+	rootKey    []byte // nil이면 sealed 상태
 }
 
 // NewBarrier는 주어진 storage/seal 구현체로 Barrier를 만든다. 처음엔 항상
@@ -49,10 +51,20 @@ func (b *Barrier) Unseal() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	if b.rootKey != nil {
+		return nil
+	}
 	rootKey, err := b.sealer.Unseal()
 	if err != nil {
 		return err
 	}
+	if b.sealer.Type() == "shamir" {
+		if err := b.validateRoot(rootKey); err != nil {
+			zeroBytes(rootKey)
+			return err
+		}
+	}
+	b.lastUnseal = time.Now().UTC()
 	b.rootKey = rootKey
 	return nil
 }

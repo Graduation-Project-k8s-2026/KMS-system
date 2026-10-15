@@ -126,15 +126,16 @@ func (s *RotationScheduler) Start() {
 	s.stopCh = make(chan struct{})
 	s.doneCh = make(chan struct{})
 
+	stopCh, doneCh := s.stopCh, s.doneCh
 	go func() {
-		defer close(s.doneCh)
+		defer close(doneCh)
 
 		ticker := time.NewTicker(s.tickInterval)
 		defer ticker.Stop() // 타이머 리소스 해제 — 안 하면 프로세스 종료와 무관하게 계속 자원을 차지한다.
 
 		for {
 			select {
-			case <-s.stopCh:
+			case <-stopCh:
 				return
 			case <-ticker.C:
 				if _, err := s.tick(time.Now().UnixMilli()); err != nil {
@@ -153,11 +154,10 @@ func (s *RotationScheduler) Stop() {
 		s.mu.Unlock()
 		return
 	}
-	s.running = false
 	stopCh := s.stopCh
 	doneCh := s.doneCh
-	s.mu.Unlock()
-
 	close(stopCh)
 	<-doneCh
+	s.running = false
+	s.mu.Unlock()
 }

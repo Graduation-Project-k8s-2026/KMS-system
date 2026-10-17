@@ -107,6 +107,8 @@ sudo kubectl --kubeconfig=/etc/kubernetes/admin.conf auth can-i encrypt keys.kms
 # 확인: no      (시연용 "권한 없음"이 그대로)
 ```
 
+(`kms.local/keys`는 apiserver에 없는 가상 리소스라 kubectl이 "resource type" 경고를 낼 수 있다. 기준은 마지막 줄의 yes/no 답이다. 작성 시점에 실제 클러스터에서 이 명령을 실행해 보지 못했다.)
+
 되돌리기: `sudo kubectl --kubeconfig=/etc/kubernetes/admin.conf delete -f /root/rbac-cb.yaml` (기존 Role은 그대로 남아 있어 옛 서버 권한에는 영향 없음).
 
 ## 4. 새 이미지·매니페스트 교체 → 재시작 (여기서 봉인됨)
@@ -179,7 +181,7 @@ sudo ls -l /var/lib/custom-kms/transit-audit/
 sudo tail -n 5 /var/lib/custom-kms/transit-audit/$(date -u +%F).jsonl
 # 확인: {"utc":...,"request_id":...,"subject":"system:serviceaccount:...","action":"encrypt","key":"demo","sar_namespace":"","status":200,"latency_ms":...}
 #       본문/평문/암호문/토큰이 없고 key와 sar_namespace가 있다 (전역 키는 sar_namespace가 빈 문자열)
-sudo curl -sS --unix-socket $SOCK http://localhost/metrics 2>/dev/null | head -0   # 메트릭은 별도 포트: 127.0.0.1:9100
+# 메트릭은 별도 포트(127.0.0.1:9100)
 curl -sS http://127.0.0.1:9100/metrics | grep kms_audit_dropped_total
 # 확인: kms_audit_dropped_total 0
 ```

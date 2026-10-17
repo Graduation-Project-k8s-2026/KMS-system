@@ -4,6 +4,10 @@
 > 해제되기 전까지(Shamir 조각 3개를 입력하거나 TPM이 자동으로 풀 때까지) **클러스터 Secret 읽기가 중단**됩니다.
 > apiserver는 암호화된 Secret을 복호화하지 못해 Secret을 쓰는 Pod의 시작·갱신이 실패할 수 있습니다.
 > 조각 3명이 **지금 같은 자리에 있을 때** 시작하세요. (4단계의 첫 재시작은 반드시 조각 3개가 필요합니다.)
+>
+> **KMS 본체 묶음(C+B·감사·오류 형식·키 삭제)과 함께 적용하는 경우 [kms-core-apply.md](kms-core-apply.md)를 따르세요** (재시작 횟수를 줄인 통합 절차).
+> 이 문서만 단독으로 적용하더라도 새 static pod 템플릿이 Transit 감사 디렉터리를 마운트하므로 먼저
+> `sudo install -d -o 10001 -g 10001 -m 0700 /var/lib/custom-kms/transit-audit` 가 필요합니다(없으면 Pod가 시작하지 못합니다).
 
 대상: 단일 노드(OCI) 운영 클러스터, 현재 봉인 방식 = Shamir(5/3, init 기록 v1).
 코드 변경: `feat/tpm-seal-migration` 브랜치 (ADR-010). 이 문서의 명령은 **서버에서 사람이 그대로 실행**하도록 썼고,
@@ -260,6 +264,9 @@ sudo kubectl --kubeconfig=/etc/kubernetes/admin.conf get --raw '/readyz?verbose'
 `docs/release/recovery.md`(조각 입력 시간 포함 418초)와 비교하세요. 결과를 `docs/release/verification.md`에 기록하세요.
 
 ## 6. 되돌리기 (TPM → Shamir)
+
+> 5단계(`seal-migrate`)를 한 번이라도 실행하면 init 기록이 `format_version 2`가 되어 **이전 서버 이미지는 이 저장소를 읽지 못합니다**(기동 거부).
+> 이 되돌리기는 봉인 *방식*만 Shamir로 바꿉니다. 이전 이미지로 복귀하려면 3단계의 정지 백업 복원이 필요합니다.
 
 ```bash
 sudo sh -c 'umask 077; curl -sS -o /dev/shm/seal-migrate.json -w "%{http_code}\n" \

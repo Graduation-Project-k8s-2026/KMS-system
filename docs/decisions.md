@@ -345,7 +345,7 @@ KMS v2 경로(apiserver → 유닉스 소켓 → `k8s-secrets`)는 SAR을 거치
 
 ## ADR-010. 봉인 방식 이전과 TPM 자동 해제
 
-**상태**: 구현 완료, 서버 적용 전 (절차: [docs/release/tpm-seal.md](release/tpm-seal.md))
+**상태**: 구현·시뮬레이터 검증 완료, **배포 보류** (재개 절차: [docs/release/tpm-seal.md](release/tpm-seal.md))
 
 **배경**
 ADR-006의 대가는 "부팅 공백"이다 — 재부팅할 때마다 사람이 Shamir 조각 3개를 넣어야 클러스터가 Secret을 읽는다.
@@ -384,6 +384,41 @@ TPM 봉인은 이 공백을 없앤다. 그런데 운영 클러스터의 Secret�
 **대가**
 - TPM 모드는 단일 장치(또는 swtpm 상태 파일)에 대한 신뢰가 추가된다. 복구 조각이 이를 보완하지만, 조각 보관 규율이 느슨해지면 Shamir 모드보다 약해질 수 있다.
 - 한 서버 안에서 두 방식을 오가므로 `seal` 패키지에 `Switch`가 생겼고, 해제 경로가 "복구 조각 완성 → Shamir, 아니면 TPM"의 우선순위를 갖는다.
+
+**배포 보류 결정과 근거 (운영 서버 시험 결과)**
+
+코드(seal 패키지, `seal-migrate`, init 기록 v2, `recovery_available`, 복구 조각 모델)는 그대로 유지하고, 운영 배포 기본값은 Shamir 전용
+(`KMS_SEAL_ALLOWED=shamir`, 이 경우 `seal-migrate target=tpm`은 403 `seal_not_allowed`)이다. 이유:
+
+| 근거 | 내용 | 확인 방법 |
+|---|---|---|
+| 컨테이너가 장치를 못 연다 | 비특권 시험 Pod(uid 10001, supplementalGroups=tss gid)가 hostPath로 넣은 `/dev/tpmrm0`을 열면 `Operation not permitted`. 파일 권한은 정상이고 쿠버네티스 **장치 cgroup**이 막는다 | **서버 실행으로 확인** |
+| hostPath 빈 디렉터리 | type 없는 hostPath가 없는 장치 경로를 마운트하면 호스트에 **빈 디렉터리**가 생긴다(`rmdir`로 복구). 장치 생성을 막을 수 있다 | **서버 실행으로 확인** |
+| swtpm 자체는 동작 | swtpm 0.7.3 + `tpm_vtpm_proxy`로 `/dev/tpmrm0` 생성 성공. 단 Ubuntu **AppArmor** swtpm 프로필 때문에 로컬 규칙이 필요했고 `--runas tss`는 `/dev/vtpmx` 권한 오류라 제거(상태 폴더 root:root 0700) | **서버 실행으로 확인** |
+| CDI 주석 무시 | containerd 2.2.1(`enable_cdi=true`)에서 CDI 설정 파일 + Pod 주석 `cdi.k8s.io/...`을 써 봤지만 주석이 조용히 무시되어 장치가 들어가지 않음 | **서버 실행으로 확인** |
+| containerd 취약점 | 2.2.1은 CVE-2026-53492(체크포인트 복원 시 CDI 주석을 신뢰; 2.1.9 / 2.2.5 / 2.3.2에서 수정)에 해당. 시험용 CDI 설정 파일은 지움. 재개 전에 containerd를 2.2.5 이상으로 올려야 한다 | 서버에서 버전 확인 + 공개 권고(문서로 본 것) |
+| 보호 이득이 작다 | swtpm은 상태를 **같은 디스크**의 파일로 둔다 → 디스크/root를 가진 공격자에게는 이득 없음. 자동 해제 때문에 재시작에 조각이 필요 없어져 오히려 Shamir의 "정족수 통제"보다 **약해지는 면**도 있다 | 설계 판단 |
+
+**하드웨어 TPM으로 옮길 때의 설계 (구현하지 않음, 문서만)**: 전용 NRI 플러그인 `cmd/kms-tpm-nri`.
+- 조건: 네임스페이스 `kube-system` + Pod 이름 접두 `kms-core-` + 컨테이너 이름 `kms` + 주석 `kubernetes.io/config.source=file`(static pod)일 때**만**
+  `/dev/tpmrm0`을 컨테이너에 넣고, 장치 cgroup에서 **그 장치만** rw로 허용(gid `tss`, 0660).
+- 장치가 없으면 넣지 않는다 → KMS는 봉인 상태로 떠서 조각으로 복구한다(빈 디렉터리 함정도 없음).
+- 설치: `/opt/nri/plugins/10-kms-tpm`에 두고 containerd 재시작 1회. 사전 등록 플러그인이라 재부팅 시 KMS Pod보다 먼저 준비된다.
+- 하드웨어 TPM으로 이전할 때는 swtpm 서비스만 빼면 된다(코드·플러그인 동일).
+- **확인이 남은 항목(코드를 읽고 검증할 것)**: `kubernetes.io/config.source=file` 주석을 API로 Pod를 만들어 흉내 낼 수 없다는 점은 kubelet 코드로
+  확인해야 한다 — 이 가정이 틀리면 아무 Pod나 장치를 얻는 우회가 생긴다.
+
+**버린 대안**
+| 대안 | 버린 이유 |
+|---|---|
+| Pod 주석 방식 CDI(`cdi.k8s.io/...`) | 2.2.1에서 주석이 무시되어 동작하지 않았고, 주석을 신뢰하는 경로 자체가 CVE-2026-53492의 원인 |
+| containerd NRI 예제 `device-injector` | 아무 Pod의 주석이나 믿고 장치·호스트 마운트를 넣어 준다 → 클러스터 내 Pod 생성 권한자가 호스트 장치를 얻는 권한 상승 경로 |
+| `privileged: true` | 컨테이너에 모든 장치·권한을 주는 과도한 권한 확대. KMS 하드닝(`readOnlyRootFilesystem`, capability drop)과 맞지 않음 |
+| swtpm을 소켓 방식으로 연결 | 컨테이너 장치 접근 문제(= 하드웨어 TPM으로 옮길 때의 문제)와 무관한 우회라 하드웨어 이전에 쓰이지 않고, 같은 디스크 상태라는 swtpm의 한계도 그대로 |
+| hostPath type `CharDevice` | 장치가 없는 노드/부팅 순서에서 Pod가 시작하지 못해 "봉인 상태로 떠서 조각 복구" 경로를 잃는다 |
+
+**실행으로 확인한 것 vs 문서로만 본 것**: 위 표의 "서버 실행으로 확인" 항목은 운영 서버에서 직접 확인했다. 코드 동작(자동 해제, 복구 조각, 이전·되돌림,
+실패 시 롤백)은 시뮬레이터(`tpm_lab`)와 가짜 TPM 단위 시험으로만 확인했고 **운영 클러스터에서 실행해 보지 않았다.** CVE 내용과 NRI 플러그인 설계는 문서로만 본 것이다.
 
 ---
 

@@ -44,7 +44,7 @@ go run ./cmd/admin-api
 | `KMS_SHAMIR_THRESHOLD` | 3 | 복원에 필요한 조각 수 |
 | `KMS_TPM_SIMULATOR` | false | TPM 시뮬레이터 사용 |
 | `KMS_TPM_DEVICE` | `/dev/tpmrm0` | 실제 TPM 장치 경로 |
-| `KMS_SEAL_ALLOWED` | `shamir,tpm` | 운영 서버의 허용 봉인 방식(실제 방식은 init 기록이 정함, ADR-010) |
+| `KMS_SEAL_ALLOWED` | `shamir,tpm` | 운영 서버의 허용 봉인 방식(실제 방식은 init 기록이 정함, ADR-010). **운영 배포 템플릿은 `shamir`** — 이때 `seal-migrate target=tpm`은 403 |
 | `KMS_TRANSIT_AUDIT_DIR` | (비움=끔) | Transit 요청 비동기 감사 파일 디렉터리 (키 이름·주체·결과·지연; 본문 미기록) |
 | `KMS_TRANSIT_AUDIT_BUFFER` | 8192 | 감사 버퍼 크기. 가득 차면 요청을 막지 않고 버리며 `kms_audit_dropped_total`이 오른다 |
 | `KMS_TRANSIT_AUDIT_FSYNC_MS` | 1000 | 감사 fsync 주기(ms) |
@@ -132,7 +132,7 @@ seal 방식별 동작:
 |---|---|---|
 | dev | 별도 단계 없음 (패스프레이즈에서 결정적 유도) | 즉시 |
 | shamir | 조각 N개 발급 — **이 순간 한 번만 표시됨** | threshold개 조각 제출 |
-| tpm | 바로 완료 | 자동 |
+| tpm | 바로 완료 | 자동 (코드·시뮬레이터 검증만; 운영 배포 보류) |
 | k8s | 바로 완료 | 자동 |
 
 > `init`은 서버 수명 동안 **한 번만** 실행된다. 재실행하면 오류.

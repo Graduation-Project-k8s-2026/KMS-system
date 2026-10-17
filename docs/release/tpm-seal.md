@@ -1,5 +1,13 @@
 # TPM 봉인 적용·이전·되돌리기 절차서
 
+> ## ⏸ 배포 보류 (ADR-010)
+> **이 절차는 지금 운영에 적용하지 않습니다.** 코드(seal 패키지, `seal-migrate`, init 기록 v2)는 있고 시뮬레이터로 검증했지만,
+> 운영 서버에서 **비특권 컨테이너가 hostPath로 넣은 `/dev/tpmrm0`을 열면 `Operation not permitted`**(쿠버네티스 장치 cgroup)였습니다.
+> 배포 템플릿은 Shamir 전용(`KMS_SEAL_ALLOWED=shamir`)이고, 이 상태에서 `seal-migrate target=tpm`은 403으로 거부됩니다.
+> 아래 내용은 **다시 켤 때를 위한 기록**이며, 서버에서 실제로 알게 된 사항은 "서버에서 알게 된 사항"과 각 단계의 ⚠ 표시에 반영했습니다.
+> 다시 켜기 전에 필요한 것: ① 장치 cgroup 문제 해결(하드웨어 TPM + 전용 NRI 플러그인 설계는 ADR-010), ② containerd 2.2.5 이상(CVE-2026-53492),
+> ③ 아래 "템플릿에 되돌려 넣기".
+
 > **경고 — 먼저 읽으세요.** 이 절차는 KMS를 **여러 번 재시작**합니다. KMS가 재시작되면 **봉인(sealed) 상태**로 뜨고,
 > 해제되기 전까지(Shamir 조각 3개를 입력하거나 TPM이 자동으로 풀 때까지) **클러스터 Secret 읽기가 중단**됩니다.
 > apiserver는 암호화된 Secret을 복호화하지 못해 Secret을 쓰는 Pod의 시작·갱신이 실패할 수 있습니다.
@@ -12,6 +20,30 @@
 대상: 단일 노드(OCI) 운영 클러스터, 현재 봉인 방식 = Shamir(5/3, init 기록 v1).
 코드 변경: `feat/tpm-seal-migration` 브랜치 (ADR-010). 이 문서의 명령은 **서버에서 사람이 그대로 실행**하도록 썼고,
 작성 시점에는 어떤 운영 서버에서도 실행하지 않았습니다. 각 단계의 "확인"을 통과한 뒤에만 다음 단계로 가세요.
+
+## 서버에서 알게 된 사항 (운영 서버 시험, 실행으로 확인)
+
+- swtpm 0.7.3 + `tpm_vtpm_proxy`로 `/dev/tpmrm0` 생성까지 성공했다.
+- **AppArmor**: Ubuntu의 swtpm 프로필이 막아서 `/etc/apparmor.d/local/usr.bin.swtpm`에 로컬 규칙이 필요했다
+  (`abstractions/nameservice`, `capability setuid`·`setgid`, `/dev/vtpmx rw`, 상태 폴더 `rw`와 그 하위 `rwk`). 규칙 추가 뒤 프로필을 다시 읽는다
+  (`sudo apparmor_parser -r /etc/apparmor.d/usr.bin.swtpm`).
+- **`--runas tss`는 쓰지 않는다**: 쓰면 `/dev/vtpmx` 권한 오류가 난다. swtpm은 root로 실행하고 상태 폴더는 `root:root 0700`으로 둔다.
+- **장치 cgroup**: 비특권 시험 Pod(uid 10001, supplementalGroups=tss gid)가 hostPath `/dev/tpmrm0`을 열면 `Operation not permitted`. 파일 권한은 정상이다.
+- **빈 디렉터리**: type 없는 hostPath가 없는 장치 경로를 마운트하자 호스트에 빈 디렉터리가 생겼다(`sudo rmdir /dev/tpmrm0`로 복구).
+- **CDI 주석은 무시**됐다(containerd 2.2.1, `enable_cdi=true`). 2.2.1은 CVE-2026-53492에 해당해 시험용 CDI 설정 파일은 지웠다.
+
+## 템플릿에 되돌려 넣기 (다시 켤 때)
+
+1. `deploy/oci-single-node/templates/kms-static-pod.yaml`:
+   - `KMS_SEAL_ALLOWED`를 `shamir,tpm`으로.
+   - env 추가: `KMS_TPM_DEVICE=/dev/tpmrm0` (PCR을 쓸 때만 `KMS_TPM_PCRS`).
+   - **장치를 어떻게 컨테이너에 넣을지는 해결책에 따른다.** hostPath(`/dev/tpmrm0` 볼륨 + `volumeMounts`)는 위 cgroup 문제로 동작하지 않았다.
+     NRI 플러그인(ADR-010 설계)을 쓰면 매니페스트에 장치 볼륨이 필요 없다(플러그인이 주입). hostPath를 다시 쓴다면 `supplementalGroups`에
+     `${TPM_GROUP_GID}`도 넣고, **type을 지정하지 말 것이 아니라** 빈 디렉터리 함정(⚠)을 먼저 해결할 것.
+2. `scripts/render-release.py`: `REQUIRED`에 `'TPM_GROUP_GID'`를 다시 넣고, `main()`에 숫자 gid 검증(`[1-9][0-9]{0,9}`)을 복원.
+   `deploy/oci-single-node/release-values.example.json`에 `"TPM_GROUP_GID": "REQUIRED_TSS_GROUP_GID"` 복원.
+3. `scripts/test_release.py`: 지금의 "TPM 항목이 없다" 단언을 뒤집고 gid 검증 테스트를 복원(git 이력 `0fa56e3`에 원본이 있다).
+4. 이 문서의 1~7단계를 따른다.
 
 ## 이 절차가 하는 일과 하지 않는 일
 
@@ -27,7 +59,7 @@
 | 사람 | 기존 Shamir 조각 보유자 3명 이상 (4단계), 새 조각을 나눠 받을 5명 (5단계) |
 | 노드 | 호스트에 `/dev/tpm*`가 **없어야** 합니다 (있으면 vTPM 장치 번호가 `tpm1`이 되어 템플릿 경로와 어긋남). 확인: `ls /dev/tpm* 2>&1` → "No such file" |
 | 코드 | 이 브랜치가 main에 merge되고, 서버 이미지(`SERVER_IMAGE` digest)가 새로 빌드·배포 가능한 상태 |
-| 렌더 입력 | 기존 릴리스 값 + 새 항목 `TPM_GROUP_GID` (2단계에서 확인) |
+| 렌더 입력 | 현재 템플릿에는 TPM 항목이 없다. 아래 "템플릿에 되돌려 넣기"로 `TPM_GROUP_GID` 입력과 템플릿 항목을 복원한 뒤 사용 |
 
 ## 1. swtpm 설치와 vTPM 장치 만들기
 
@@ -43,16 +75,30 @@ sudo modprobe tpm_vtpm_proxy
 echo tpm_vtpm_proxy | sudo tee /etc/modules-load.d/tpm_vtpm_proxy.conf
 lsmod | grep tpm_vtpm_proxy          # 확인: 한 줄 출력
 
-# swtpm이 권한을 낮춰 실행할 tss 계정/그룹 (이미 있으면 건너뜀)
+# 장치 접근용 tss 그룹 (이미 있으면 건너뜀). swtpm 자체는 root로 실행한다(--runas 사용 금지, ⚠ 아래)
 getent group tss >/dev/null || sudo groupadd --system tss
-getent passwd tss >/dev/null || sudo useradd --system --gid tss --no-create-home --shell /usr/sbin/nologin tss
 
 # TPM 상태 디렉터리. 반드시 영속 경로(/run, /tmp 금지): 재부팅 후에도 같은 TPM이어야
 # 저장된 blob이 열립니다. 이 상태가 사라지면 blob은 영구히 못 엽니다(복구 조각으로만 해제).
-sudo install -d -m 0700 -o tss -g tss /var/lib/custom-kms/swtpm
+# ⚠ 서버 시험 결과: --runas tss는 /dev/vtpmx 권한 오류라 쓰지 않고, 상태 폴더는 root:root 0700이다.
+sudo install -d -m 0700 -o root -g root /var/lib/custom-kms/swtpm
 ```
 
-systemd 서비스 (`--runas tss`: 가상 장치를 만든 직후 root 권한을 버립니다):
+⚠ **AppArmor 로컬 규칙** (Ubuntu의 swtpm 프로필이 없으면 막는다 — 서버에서 필요했던 규칙):
+
+```bash
+sudo tee -a /etc/apparmor.d/local/usr.bin.swtpm >/dev/null <<'RULES'
+#include <abstractions/nameservice>
+capability setuid,
+capability setgid,
+/dev/vtpmx rw,
+/var/lib/custom-kms/swtpm/ rw,
+/var/lib/custom-kms/swtpm/** rwk,
+RULES
+sudo apparmor_parser -r /etc/apparmor.d/usr.bin.swtpm
+```
+
+systemd 서비스 (root로 실행; `--runas` 없음):
 
 ```bash
 sudo tee /etc/systemd/system/swtpm-kms.service >/dev/null <<'UNIT'
@@ -64,7 +110,7 @@ Before=kubelet.service
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/swtpm chardev --vtpm-proxy --tpm2 --tpmstate dir=/var/lib/custom-kms/swtpm,mode=0600 --runas tss
+ExecStart=/usr/bin/swtpm chardev --vtpm-proxy --tpm2 --tpmstate dir=/var/lib/custom-kms/swtpm,mode=0600
 # 장치 노드가 생길 때까지 기다린 뒤에야 "시작됨"으로 취급 (kubelet이 그 뒤에 뜨도록)
 ExecStartPost=/bin/sh -c 'for i in $(seq 1 50); do [ -c /dev/tpmrm0 ] && exit 0; sleep 0.2; done; echo "tpmrm0 did not appear" >&2; exit 1'
 Restart=on-failure
@@ -291,15 +337,15 @@ Shamir로 되돌린 뒤에는 새 조각 묶음과 이전 조각 묶음이 둘 �
 
 ## 알려진 위험 (적용 전에 읽으세요)
 
-1. **컨테이너의 장치 접근 (가장 먼저 확인할 것).** 일반(비특권) 컨테이너는 런타임의 장치 cgroup 허용 목록에 없는 장치를 hostPath로
-   마운트해도 `open`이 `operation not permitted`로 거부될 수 있습니다. 파일 권한(gid)과 별개의 제한입니다. 이 문서의 구성
-   (hostPath + supplementalGroups)이 이 클러스터의 런타임에서 실제로 열리는지는 **작성 시점에 실행해 확인하지 못했습니다.**
-   5단계 `seal-migrate`가 503(`permission denied` 또는 `operation not permitted`)이면 **아무것도 바뀐 것이 없습니다.** 대안:
-   (a) 컨테이너에 `privileged: true`(강한 권한 확대 — 보안 검토 후 결정), (b) containerd CDI로 장치를 허용 목록에 추가.
-   어느 쪽도 임의로 선택하지 않았으니 결과를 알려 주세요.
+> 아래 1·3번은 **운영 서버에서 실제로 발생**했다(위 "서버에서 알게 된 사항").
+
+1. **컨테이너의 장치 접근 — 막혀 있다(배포 보류의 원인).** 비특권 컨테이너는 hostPath로 넣은 장치를 장치 cgroup 때문에 열 수 없다
+   (`Operation not permitted`, 파일 권한과 무관). `seal-migrate`는 이 경우 503으로 **실패하고 아무것도 바꾸지 않는다.** 해결 후보와 탈락 사유는
+   ADR-010: Pod 주석 CDI(2.2.1에서 무시됨 + CVE), NRI 예제 `device-injector`(아무 Pod 주석이나 신뢰), `privileged: true`(과도한 권한)는 쓰지 않고,
+   전용 NRI 플러그인(하드웨어 TPM 이전 설계)만 남아 있다 — **구현하지 않았다.**
 2. **swtpm 재시작 = KMS 재시작 필요.** swtpm이 재시작되면 장치가 새로 생성되어, KMS가 들고 있는 이전 장치 핸들이 끊어집니다.
    swtpm을 재시작했다면 5단계의 "Static Pod 재시작"을 같이 하세요.
-3. **빈 디렉터리 함정.** swtpm보다 먼저 Pod가 떠서 런타임이 `/dev/tpmrm0`을 디렉터리로 만들었다면: `sudo systemctl stop swtpm-kms;
+3. **빈 디렉터리 함정 (서버에서 발생).** type 없는 hostPath로 없는 장치 경로를 마운트하면 호스트에 빈 디렉터리가 생긴다(swtpm보다 먼저 Pod가 뜬 경우 포함). 복구: `sudo systemctl stop swtpm-kms;
    sudo rmdir /dev/tpmrm0; sudo systemctl start swtpm-kms` 후 KMS 재시작.
 4. **PCR은 기본 꺼짐** (`KMS_TPM_PCRS` 미설정). 켜려면 템플릿에 `KMS_TPM_PCRS=7` 같은 값을 추가하고 *다시 이전*(되돌리기 → 이전)해야
    합니다. 켜면 커널/펌웨어 업데이트로 PCR이 바뀔 때 자동 해제가 실패해 복구 조각이 필요합니다 (ADR-010).

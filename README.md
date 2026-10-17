@@ -22,7 +22,7 @@
 - [x] 암호화 / 복호화 / rewrap
 - [x] 키 회전 (수동 + 자동 주기)
 - [x] min_decryption_version (버전 이하 복호화 차단)
-- [x] 루트 키 보호 4종 (dev / shamir / tpm / k8s)
+- [x] 루트 키 보호 4종 (dev / shamir / tpm / k8s) — 구현·시험 기준. **운영 배포는 Shamir 전용**이며 TPM은 코드·시뮬레이터 검증만 끝나고 배포 보류 (ADR-010)
 
 ### API 구조
 - [x] Transit / Admin 평면 분리 (TCP / 유닉스 소켓)
@@ -132,7 +132,7 @@ KMS_SEAL_TYPE=dev KMS_MASTER_KEY=change-me KMS_STORAGE=memory go run ./cmd/serve
 |---|---|---|
 | `dev` (기본) | 패스프레이즈 해싱 (개발용) | `KMS_MASTER_KEY` |
 | `shamir` | Shamir Secret Sharing | `KMS_SHAMIR_PARTS`(기본 5), `KMS_SHAMIR_THRESHOLD`(기본 3) |
-| `tpm` | TPM 봉인 | `KMS_TPM_SIMULATOR=true`(시뮬레이터) 또는 `KMS_TPM_DEVICE`(실제 장치, 기본 `/dev/tpmrm0`) |
+| `tpm` | TPM 봉인 (**배포 보류**: 비특권 컨테이너가 장치 cgroup 때문에 장치를 열 수 없음. 운영은 Shamir, ADR-010) | `KMS_TPM_SIMULATOR=true`(시뮬레이터) 또는 `KMS_TPM_DEVICE`(실제 장치, 기본 `/dev/tpmrm0`) |
 | `k8s` | K8s Secret 위임 | `KMS_K8S_NAMESPACE`(기본 `default`), `KMS_K8S_SECRET_NAME`(기본 `kms-root-key`) |
 
 리스너 관련 환경변수:

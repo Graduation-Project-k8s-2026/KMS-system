@@ -19,6 +19,9 @@ const keysPrefix = "keys/"
 var ErrBackend = errors.New("key backend unavailable")
 var ErrAlreadyExists = errors.New("key already exists")
 
+// ErrKeyNotActive: disabled 또는 pending_deletion 상태의 키로 암복호화/회전을 시도했을 때.
+var ErrKeyNotActive = errors.New("key is not active")
+
 // keyNameRE: 허용하는 키 이름 형식 (점 없는 전역 키).
 var keyNameRE = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
 
@@ -33,17 +36,17 @@ var dns1123LabelRE = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`)
 // 전체 길이는 기존과 같은 64자 이하(점 포함)다. 형식이 틀리면 KeyPolicyError.
 func ParseName(name string) (ns, base string, err error) {
 	if len(name) > 64 {
-		return "", "", &KeyPolicyError{Msg: "invalid key name: too long"}
+		return "", "", &KeyPolicyError{Msg: "invalid key name: too long", Code: "invalid_key_name", Public: "invalid key name"}
 	}
 	if i := strings.IndexByte(name, '.'); i >= 0 {
 		ns, base = name[:i], name[i+1:]
 		if !dns1123LabelRE.MatchString(ns) || !keyNameRE.MatchString(base) {
-			return "", "", &KeyPolicyError{Msg: "invalid key name: want <namespace>.<name> with a DNS-1123 namespace and at most one dot"}
+			return "", "", &KeyPolicyError{Msg: "invalid key name: want <namespace>.<name> with a DNS-1123 namespace and at most one dot", Code: "invalid_key_name", Public: "invalid key name"}
 		}
 		return ns, base, nil
 	}
 	if !keyNameRE.MatchString(name) {
-		return "", "", &KeyPolicyError{Msg: fmt.Sprintf("invalid key name %q: must match %s", name, keyNameRE.String())}
+		return "", "", &KeyPolicyError{Msg: fmt.Sprintf("invalid key name %q: must match %s", name, keyNameRE.String()), Code: "invalid_key_name", Public: "invalid key name"}
 	}
 	return "", name, nil
 }
@@ -67,7 +70,11 @@ func (e *KeyNotFoundError) Is(target error) bool {
 // KeyPolicyError: 이름 형식 위반, 중복 생성, min_decryption_version 위반,
 // 설정값 범위 위반 등 "요청이 정책에 맞지 않는" 모든 경우에 반환한다.
 type KeyPolicyError struct {
-	Msg string
+	Msg string // 상세 설명 (키 이름·버전 숫자 포함 가능). 서버 로그/감사용 — API 응답에는 쓰지 않는다.
+	// Code: 기계용 오류 코드 (비어 있으면 "invalid_request").
+	Code string
+	// Public: 응답에 그대로 보여도 안전한 설명 (키 이름·버전 숫자를 넣지 않는다). 비어 있으면 일반 문구를 쓴다.
+	Public string
 }
 
 func (e *KeyPolicyError) Error() string {
@@ -171,7 +178,7 @@ func (m *KeyManager) CreateKey(name string, autoRotatePeriodSec int) (KeyRingMet
 		return KeyRingMeta{}, err
 	}
 	if autoRotatePeriodSec < 0 {
-		return KeyRingMeta{}, &KeyPolicyError{Msg: "autoRotatePeriodSec must be >= 0"}
+		return KeyRingMeta{}, &KeyPolicyError{Msg: "autoRotatePeriodSec must be >= 0", Code: "invalid_request", Public: "autoRotatePeriodSec must be >= 0"}
 	}
 
 	if _, err := m.loadRing(name); err == nil {
@@ -253,14 +260,13 @@ func (m *KeyManager) UpdateConfig(name string, minDecryptionVersion *int, autoRo
 	}
 
 	if _, protected := m.protected.Load(name); protected && minDecryptionVersion != nil && *minDecryptionVersion != 1 {
-		return KeyRingMeta{}, &KeyPolicyError{Msg: "protected key versions must be retained"}
+		return KeyRingMeta{}, &KeyPolicyError{Msg: "protected key versions must be retained", Code: "key_protected", Public: "protected key versions must be retained"}
 	}
 	if minDecryptionVersion != nil {
 		v := *minDecryptionVersion
 		if v < 1 || v > ring.LatestVersion {
-			return KeyRingMeta{}, &KeyPolicyError{
-				Msg: fmt.Sprintf("minDecryptionVersion %d out of range [1, %d]", v, ring.LatestVersion),
-			}
+			m := fmt.Sprintf("minDecryptionVersion %d out of range [1, %d]", v, ring.LatestVersion)
+			return KeyRingMeta{}, &KeyPolicyError{Msg: m, Code: "invalid_request", Public: m} // 관리 평면 응답: 설정 범위는 보여도 된다
 		}
 		ring.MinDecryptionVersion = v
 	}
@@ -268,7 +274,7 @@ func (m *KeyManager) UpdateConfig(name string, minDecryptionVersion *int, autoRo
 	if autoRotatePeriodSec != nil {
 		v := *autoRotatePeriodSec
 		if v < 0 {
-			return KeyRingMeta{}, &KeyPolicyError{Msg: "autoRotatePeriodSec must be >= 0"}
+			return KeyRingMeta{}, &KeyPolicyError{Msg: "autoRotatePeriodSec must be >= 0", Code: "invalid_request", Public: "autoRotatePeriodSec must be >= 0"}
 		}
 		ring.AutoRotatePeriodSec = v
 	}
@@ -309,7 +315,9 @@ func (m *KeyManager) GetDecryptionKEK(name string, version int) ([]byte, error) 
 
 	if version < ring.MinDecryptionVersion {
 		return nil, &KeyPolicyError{
-			Msg: fmt.Sprintf("version %d is below min_decryption_version %d for key %q", version, ring.MinDecryptionVersion, name),
+			Msg:    fmt.Sprintf("version %d is below min_decryption_version %d for key %q", version, ring.MinDecryptionVersion, name),
+			Code:   "version_not_allowed",
+			Public: "the key version that protects this ciphertext is no longer allowed for decryption",
 		}
 	}
 
@@ -318,7 +326,8 @@ func (m *KeyManager) GetDecryptionKEK(name string, version int) ([]byte, error) 
 			return v.KeyMaterial, nil
 		}
 	}
-	return nil, &KeyPolicyError{Msg: fmt.Sprintf("version %d does not exist for key %q", version, name)}
+	return nil, &KeyPolicyError{Msg: fmt.Sprintf("version %d does not exist for key %q", version, name), Code: "version_not_found",
+		Public: "the key version that protects this ciphertext does not exist"}
 }
 
 // FindKeysDueForRotation은 자동 회전이 설정되어 있고(AutoRotatePeriodSec > 0),

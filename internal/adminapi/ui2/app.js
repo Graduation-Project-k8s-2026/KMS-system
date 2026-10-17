@@ -125,7 +125,7 @@
   // ---- 오류 문구: 상태 코드별 한국어 설명 + (원래 코드·서버 메시지는 작게) ----
   var STATUS_KO = { 401: '로그인이 필요해요', 403: '권한이 없어요', 404: '경로를 찾을 수 없어요', 409: '이미 존재해요', 413: '요청이 너무 커요',
     503: 'KMS가 봉인되었거나 일시적으로 사용할 수 없어요' };
-  function serverMsg(r) { return ((r.data && r.data.error) || r.text || '').toString().trim().slice(0, 200); }
+  function serverMsg(r) { return ((r.data && (r.data.message || r.data.error)) || r.text || '').toString().trim().slice(0, 200); }
   var errText = K.errText = function (r) {
     if (!r.status) return '서버에 연결하지 못했어요';
     return (STATUS_KO[r.status] || '요청에 실패했어요') + ' (HTTP ' + r.status + (serverMsg(r) ? ' · ' + serverMsg(r) : '') + ')';

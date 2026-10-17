@@ -24,18 +24,18 @@ func Middleware(a *Authorizer, verb string) func(http.Handler) http.Handler {
 				// 검증) 정상 배선에서는 여기 도달할 수 없다 — 도달했다면
 				// 배선 실수다. 판단할 근거가 없으므로 안전하게 거부한다.
 				slog.Error("authz: no identity in request context; authn middleware must run first", "path", r.URL.Path)
-				httputil.WriteJSONError(w, http.StatusForbidden, "forbidden")
+				httputil.WriteAPIError(w, http.StatusForbidden, "forbidden", "request is not permitted", "")
 				return
 			}
 
 			name := chi.URLParam(r, "name")
 			allowed, err := a.Check(r.Context(), identity, name, verb)
 			if err != nil {
-				httputil.WriteJSONError(w, http.StatusServiceUnavailable, "authorization backend unavailable")
+				httputil.WriteAPIError(w, http.StatusServiceUnavailable, "authz_unavailable", "authorization backend unavailable", "retry later")
 				return
 			}
 			if !allowed {
-				httputil.WriteJSONError(w, http.StatusForbidden, "forbidden")
+				httputil.WriteAPIError(w, http.StatusForbidden, "forbidden", "request is not permitted", "")
 				return
 			}
 

@@ -10,12 +10,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"sync"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/api/httputil"
+	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/audit"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/barrier"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/keys"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/seal"
@@ -73,6 +75,9 @@ func NewRouter(deps Deps) http.Handler {
 	// 상태에서 호출해야 하므로, 여길 막으면 봉인을 영영 풀 수 없게 된다.
 	r.Route("/v1/sys", func(r chi.Router) {
 		r.Get("/seal-status", handleSealStatus(deps, progress))
+		// 현재 봉인 방식의 특성(shamir/tpm). Transit에도 같은 경로가 있다 — 관리 화면은 유닉스 소켓
+		// 중계(admin-api)로만 서버와 통신하므로 이쪽에도 필요하다. 키 자료가 아닌 고정된 설명 값이다.
+		r.Get("/seal-profile", handleSealProfile(deps))
 		r.Post("/init", handleInit(deps))
 		r.Post("/seal", func(w http.ResponseWriter, r *http.Request) {
 			if deps.OnSeal != nil {
@@ -102,6 +107,11 @@ func NewRouter(deps Deps) http.Handler {
 			r.Get("/{name}", handleGetKey(deps))
 			r.Post("/{name}/rotate", handleRotateKey(deps))
 			r.Post("/{name}/config", handleUpdateConfig(deps))
+			// 키 수명 주기 (사용 중지 → 삭제 예약 → 삭제). 관리 소켓 전용 — Transit에는 노출하지 않는다.
+			r.Post("/{name}/disable", handleKeyState(deps, deps.Keys.DisableKey))
+			r.Post("/{name}/enable", handleKeyState(deps, deps.Keys.EnableKey))
+			r.Post("/{name}/cancel-deletion", handleKeyState(deps, deps.Keys.CancelDeletion))
+			r.Post("/{name}/schedule-deletion", handleScheduleDeletion(deps))
 		})
 	})
 
@@ -479,6 +489,9 @@ func handleSealMigrate(deps Deps) http.HandlerFunc {
 				httputil.WriteJSONError(w, http.StatusBadRequest, `target must be "shamir" or "tpm"`)
 			case errors.Is(err, barrier.ErrSealed), errors.Is(err, barrier.ErrSealAlreadyTarget), errors.Is(err, seal.ErrTPMAlreadyInitialized):
 				httputil.WriteJSONError(w, http.StatusConflict, err.Error())
+			case errors.Is(err, seal.ErrTPMNotAllowed):
+				// 정책(KMS_SEAL_ALLOWED)상 허용되지 않은 방식: 장치 문제(503)가 아니라 거부(403). 아무것도 바뀌지 않았다.
+				httputil.WriteAPIError(w, http.StatusForbidden, "seal_not_allowed", "this seal method is not allowed on this server", "see KMS_SEAL_ALLOWED")
 			case errors.Is(err, seal.ErrTPMUnavailable):
 				httputil.WriteJSONError(w, http.StatusServiceUnavailable, err.Error())
 			case errors.Is(err, barrier.ErrRootVerification), errors.Is(err, barrier.ErrSealModeMismatch):
@@ -521,6 +534,7 @@ func handleCreateKey(deps Deps) http.HandlerFunc {
 			autoRotate = *req.AutoRotatePeriodSec
 		}
 
+		audit.SetKey(r, req.Name) // 경로에 이름이 없는 작업이라 핸들러가 감사 기록에 대상 키를 알린다
 		meta, err := deps.Keys.CreateKey(req.Name, autoRotate)
 		if err != nil {
 			if errors.Is(err, barrier.ErrInitialized) {
@@ -606,5 +620,50 @@ func handleUpdateConfig(deps Deps) http.HandlerFunc {
 			return
 		}
 		httputil.WriteJSON(w, http.StatusOK, meta)
+	}
+}
+
+// handleKeyState는 키 상태 전이 핸들러 공통 부분이다 (disable / enable / cancel-deletion).
+// 대상 키 이름은 경로에서 감사 미들웨어가 읽는다.
+func handleKeyState(deps Deps, op func(name string) (keys.KeyRingMeta, error)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		meta, err := op(chi.URLParam(r, "name"))
+		if err != nil {
+			httputil.WriteError(w, err, http.StatusServiceUnavailable)
+			return
+		}
+		httputil.WriteJSON(w, http.StatusOK, meta)
+	}
+}
+
+type scheduleDeletionRequest struct {
+	// PendingDays: 유예 일수 (7~30). 생략하거나 0이면 30.
+	PendingDays int `json:"pending_days"`
+}
+
+func handleScheduleDeletion(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req scheduleDeletionRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			httputil.WriteAPIError(w, http.StatusBadRequest, "bad_request", "invalid request body", "")
+			return
+		}
+		meta, err := deps.Keys.ScheduleDeletion(chi.URLParam(r, "name"), req.PendingDays)
+		if err != nil {
+			httputil.WriteError(w, err, http.StatusServiceUnavailable)
+			return
+		}
+		httputil.WriteJSON(w, http.StatusOK, meta)
+	}
+}
+
+func handleSealProfile(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		profiler, ok := deps.Seal.(seal.Profiler)
+		if !ok {
+			httputil.WriteJSONError(w, http.StatusInternalServerError, "seal profile unavailable")
+			return
+		}
+		httputil.WriteJSON(w, http.StatusOK, profiler.Profile())
 	}
 }

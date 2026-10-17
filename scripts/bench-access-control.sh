@@ -14,7 +14,7 @@
 #
 # 사전 조건
 #   - kind 클러스터 kms-bench 가 떠 있고, team-a/app-a ServiceAccount와
-#     kms.local/keys "demo" encrypt 권한(Role/RoleBinding)이 있어야 한다
+#     kms.local/keys "demo" encrypt 권한이 있어야 한다 (전역 키 → ClusterRole/ClusterRoleBinding, ADR-009)
 #   - 수동으로 띄운 KMS 서버는 종료해둘 것 (포트 8200/9100 충돌)
 #
 # 사용법

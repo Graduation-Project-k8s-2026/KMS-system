@@ -47,7 +47,7 @@
     var search = h('input', { type: 'text', placeholder: '키 이름 검색', 'aria-label': '키 이름 검색' });
     search.addEventListener('input', function () { query = search.value.trim().toLowerCase(); draw(); });
     tools.appendChild(search);
-    var COLS = [['Name', '이름'], ['LatestVersion', '최신 버전'], ['MinDecryptionVersion', '옛 버전 차단'], ['AutoRotatePeriodSec', '자동 교체 주기'], ['LastRotatedAt', '마지막 교체'], ['CreatedAt', '생성일']];
+    var COLS = [['Name', '이름'], ['state', '상태'], ['LatestVersion', '최신 버전'], ['MinDecryptionVersion', '옛 버전 차단'], ['AutoRotatePeriodSec', '자동 교체 주기'], ['LastRotatedAt', '마지막 교체'], ['CreatedAt', '생성일']];
     var SORTABLE = { Name: 1, LatestVersion: 1, CreatedAt: 1 };
     function lastRotated(m) { return K.validDate(m.LastRotatedAt) ? m.LastRotatedAt : m.CreatedAt; }
     function draw() {
@@ -72,7 +72,7 @@
         var ago = h('td', {}, days === null ? '—' : h('span', { class: stale ? 'stale' : '', title: stale ? STALE_DAYS + '일이 넘었어요. 새 버전으로 교체를 고려하세요' : '' },
           (stale ? '⚠ ' : '') + (days === 0 ? '오늘' : days + '일 전') + (never ? ' (생성 후 교체 없음)' : '')));
         body.appendChild(h('tr', { class: 'click', onclick: function () { location.hash = '#/keys/' + encodeURIComponent(m.Name); } }, [
-          h('td', { class: 'mono', text: m.Name }), h('td', { text: 'v' + m.LatestVersion }),
+          h('td', { class: 'mono', text: m.Name }), h('td', {}, K.stateBadge(m)), h('td', { text: 'v' + m.LatestVersion }),
           h('td', { text: m.MinDecryptionVersion <= 1 ? '차단 안 함' : 'v' + (m.MinDecryptionVersion - 1) + ' 이하 차단' }),
           h('td', { text: K.fmtPeriod(m.AutoRotatePeriodSec) }), ago, h('td', { text: K.fmtDate(m.CreatedAt) })]));
       });
@@ -90,7 +90,8 @@
     var r = await K.api('GET', '/v1/keys/' + encodeURIComponent(name));
     if (!r.ok || !r.data) { view.appendChild(K.note('키를 불러오지 못했어요: ' + K.errText(r))); return; }
     var m = r.data;
-    view.appendChild(h('h1', { class: 'mono', text: m.Name }));
+    var protectedList = await K.protectedKeys(), isProtected = protectedList.indexOf(m.Name) >= 0, state = K.keyState(m);
+    view.appendChild(h('div', { class: 'home-head' }, [h('h1', { class: 'mono', text: m.Name }), K.stateBadge(m)]));
     view.appendChild(h('p', { class: 'page-sub', text: '종류: ' + m.Type + ' · 생성 ' + K.fmtDate(m.CreatedAt) + ' · 마지막 교체 ' + K.fmtDate(m.LastRotatedAt) }));
     var minV = m.MinDecryptionVersion;
     view.appendChild(h('div', { class: 'cards three' }, [K.card('최신 버전', 'v' + m.LatestVersion, '새 암호화에 쓰는 버전'),
@@ -115,7 +116,7 @@
       h('div', { class: 'panel' }, [h('h2', { text: '교체 이력' }), tl])]));
 
     var msg = K.msgBox();
-    var rotate = h('button', { class: 'btn', text: '새 버전으로 교체', onclick: async function () {
+    var rotate = h('button', { class: 'btn', text: '새 버전으로 교체', disabled: state === 'active' ? undefined : 'disabled', title: state === 'active' ? '' : '사용 중지 또는 삭제 예정인 키는 교체할 수 없어요', onclick: async function () {
       var ok = await K.confirm('새 버전으로 교체할까요?', ['새 버전 v' + (m.LatestVersion + 1) + '이 만들어져요. 앞으로의 암호화는 새 버전으로 하고, 이전 버전 암호문은 계속 풀 수 있어요. (키 교체 = rotation)'], '교체');
       if (!ok) return;
       var res = await K.api('POST', '/v1/keys/' + encodeURIComponent(name) + '/rotate', {});
@@ -148,7 +149,58 @@
         K.field('옛 버전 차단', sel, minV <= 1 ? '지금은 모든 버전의 암호문을 풀 수 있어요' : '지금은 v' + (minV - 1) + ' 이하로 만든 암호문은 거부돼요'), K.rotateField(rotIn)]),
       h('div', { class: 'warn-line', text: '차단하기 전에 옛 암호문을 새 버전으로 옮겼는지(rewrap) 확인하세요. 옮기지 않은 데이터는 읽을 수 없게 돼요.' }),
       h('div', { class: 'row top-gap' }, [save])])), msg]));
+    if (K.writable()) view.appendChild(lifecyclePanel(m, isProtected, state));
   }
+  // ---- 키 수명 주기: 사용 중지 → 삭제 예약 → 삭제 (관리자에게만 보인다. 뷰어에게는 패널 자체를 그리지 않는다) ----
+  function lifecyclePanel(m, isProtected, state) {
+    var name = m.Name, msg = K.msgBox();
+    var days = h('input', { type: 'number', min: '7', max: '30', value: '30', 'aria-label': '삭제 유예 일수' });
+    // 호출 경로는 각 버튼에 그대로 적는다(정적 점검 테스트 uipaths_test.go가 화면이 부르는 경로를 글자 그대로 읽는다).
+    async function done(failPrefix, p) {
+      var r = await p;
+      if (!r.ok) { K.showMsg(msg, K.failMsg(failPrefix, r), 'bad'); return; }
+      K.route();
+    }
+    function btn(label, cls, onclick, disabled, why) {
+      var b = h('button', { class: 'btn ' + cls, type: 'button', text: label, onclick: onclick });
+      if (disabled) { b.disabled = true; b.title = why; }
+      return b;
+    }
+    var protWhy = '보호 키라 사용 중지·삭제 예약을 할 수 없어요';
+    var row = h('div', { class: 'row' });
+    if (state === 'active') {
+      row.appendChild(btn('사용 중지', 'ghost', async function () {
+        var ok = await K.confirm('키를 사용 중지할까요?', ['"' + name + '"로 암호화·복호화·rewrap이 모두 거부돼요(409). 다시 사용으로 되돌릴 수 있어요.', '이 키를 쓰는 앱이 오류를 내는지 지켜보는 단계예요.'], '사용 중지', true, name);
+        if (ok) done('사용 중지 실패: ', K.api('POST', '/v1/keys/' + encodeURIComponent(name) + '/disable', {}));
+      }, isProtected, protWhy));
+    }
+    if (state === 'disabled') row.appendChild(btn('다시 사용', '', async function () {
+      var ok = await K.confirm('키를 다시 사용할까요?', ['"' + name + '"의 암호화·복호화가 다시 허용돼요.'], '다시 사용');
+      if (ok) done('다시 사용 실패: ', K.api('POST', '/v1/keys/' + encodeURIComponent(name) + '/enable', {}));
+    }, false));
+    if (state !== 'pending_deletion') {
+      row.appendChild(h('span', { class: 'muted', text: '삭제 유예(일)' })); row.appendChild(days);
+      row.appendChild(btn('삭제 예약', 'danger', async function () {
+        var d = parseInt(days.value, 10);
+        if (!Number.isInteger(d) || d < 7 || d > 30) { K.showMsg(msg, '삭제 유예는 7~30일이에요.', 'bad'); return; }
+        var ok = await K.confirm('키 삭제를 예약할까요?', ['"' + name + '"은 ' + d + '일 뒤에 영구 삭제돼요. 삭제되면 이 키로 암호화한 데이터는 다시는 복호화할 수 없어요.',
+          '예약하는 순간부터 이 키는 사용할 수 없어요(사용 중지와 같은 상태). 유예 안에 삭제 취소로 멈출 수 있어요.'], '삭제 예약', true, name);
+        if (ok) done('삭제 예약 실패: ', K.api('POST', '/v1/keys/' + encodeURIComponent(name) + '/schedule-deletion', { pending_days: d }));
+      }, isProtected, protWhy));
+    } else {
+      var when = K.validDate(m.deletion_date);
+      row.appendChild(h('span', { text: '삭제 예정일: ' + (when ? when.toLocaleString('ko-KR', { dateStyle: 'long', timeStyle: 'short' }) : '—') }));
+      row.appendChild(btn('삭제 취소', '', async function () {
+        var ok = await K.confirm('삭제 예약을 취소할까요?', ['취소하면 키는 "사용 중지" 상태로 돌아가요. 다시 쓰려면 "다시 사용"을 누르세요.'], '삭제 취소');
+        if (ok) done('삭제 취소 실패: ', K.api('POST', '/v1/keys/' + encodeURIComponent(name) + '/cancel-deletion', {}));
+      }, false));
+    }
+    var panel = h('div', { class: 'panel' }, [h('h2', { text: '키 수명 주기' }),
+      h('p', { class: 'muted', text: '사용 중지 → 삭제 예약(7~30일 유예) → 삭제. 삭제는 되돌릴 수 없어서 단계를 나눴어요.' }), row, msg]);
+    if (isProtected) panel.appendChild(h('div', { class: 'warn-line', text: '🔒 보호 키: KMS v2 경로(클러스터 Secret 암호화) 또는 KMS_PROTECTED_KEYS에 등록된 키예요. 이 키를 멈추거나 지우면 클러스터 Secret을 읽을 수 없게 되므로 사용 중지·삭제 예약이 막혀 있어요.' }));
+    return panel;
+  }
+
   // #/keys → 목록, #/keys/<이름> → 상세
   K.pages.keys = function (view, args) { return args && args.length ? keyDetail(view, args) : keyList(view); };
 })();

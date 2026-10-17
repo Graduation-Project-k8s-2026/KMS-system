@@ -22,11 +22,21 @@
 - [x] 암호화 / 복호화 / rewrap
 - [x] 키 회전 (수동 + 자동 주기)
 - [x] min_decryption_version (버전 이하 복호화 차단)
-- [x] 루트 키 보호 4종 (dev / shamir / tpm / k8s)
+- [x] 루트 키 보호 4종 (dev / shamir / tpm / k8s) — 구현·시험 기준. **운영 배포는 Shamir 전용**이며 TPM은 코드·시뮬레이터 검증만 끝나고 배포 보류 (ADR-010)
 
 ### API 구조
 - [x] Transit / Admin 평면 분리 (TCP / 유닉스 소켓)
 - [x] 관리 API (admin.sock → HTTP 중계, 별도 프로세스)
+- [x] data key API (`POST /v1/datakey/{name}`) — 큰 데이터는 클라이언트에서 봉투 암호화
+- [x] 키 수명 주기 (사용 중지 → 삭제 예약 → 삭제, 보호 키) — ADR-012
+- [x] Transit 요청 비동기 감사, 오류 응답 `{error,message,hint}` 통일
+- [x] TLS 인증서 무중단 교체 (재시작·조각 입력 불필요) — ADR-015
+- [x] 외부(인터넷 공개) 리스너 `KMS_EXTERNAL_ADDR` — 요청자·키 네임스페이스 제한, IP별 요청 수 제한. **인증·인가가 완전하지 않으면 뜨지 않는다**(ADR-014, ADR-020)
+
+### 클라이언트·화면
+- [x] `kms` CLI(`cmd/kms`)와 큰 파일 형식 KMSF(`pkg/kmsfile`) — login / encrypt / decrypt / datakey. 설치: `install.sh`, 빌드: `scripts/build-cli.sh` (docs/usage.md)
+- [x] 관리 화면 v2 (`/v2/`): 키 상태·수명 주기, 감사(관리+Transit 합침), 성능 시험 기준 비교, 대시보드 시간 범위. 서버 없이 `scripts/preview-admin-ui.py`로 미리 보기 (ADR-017)
+- [x] 사용자 포털 — **tailnet 전용 시험 도구**. 파일 암호화 탭은 브라우저 안에서 암호화 (ADR-018)
 
 ### 접근 제어
 - [x] 인증 — ServiceAccount 토큰 로컬 JWT 서명 검증
@@ -79,6 +89,7 @@ Root Key (seal이 보호, 메모리에만 존재)
 ## 프로젝트 구조 (예정)
 cmd/server/            KMS 서버 실행 진입점 (main.go) — Transit(TCP)/Admin(유닉스 소켓)/Metrics(TCP) 세 리스너를 함께 기동
 cmd/admin-api/         관리 API 프로세스 실행 진입점 — HTTP로 받아 admin.sock으로 중계
+cmd/kms/               외부 사용자용 CLI (login/encrypt/decrypt/datakey) — pkg/kmsfile 사용
 cmd/bench/             성능 측정 CLI — Transit API에 부하를 걸어 처리량/지연 측정 (서버 코드 아님, 외부 HTTP 클라이언트)
 internal/crypto/       AES-GCM, 봉투암호화 로직
 internal/keys/         키 생성/조회/회전/버전 관리
@@ -132,7 +143,7 @@ KMS_SEAL_TYPE=dev KMS_MASTER_KEY=change-me KMS_STORAGE=memory go run ./cmd/serve
 |---|---|---|
 | `dev` (기본) | 패스프레이즈 해싱 (개발용) | `KMS_MASTER_KEY` |
 | `shamir` | Shamir Secret Sharing | `KMS_SHAMIR_PARTS`(기본 5), `KMS_SHAMIR_THRESHOLD`(기본 3) |
-| `tpm` | TPM 봉인 | `KMS_TPM_SIMULATOR=true`(시뮬레이터) 또는 `KMS_TPM_DEVICE`(실제 장치, 기본 `/dev/tpmrm0`) |
+| `tpm` | TPM 봉인 (**배포 보류**: 비특권 컨테이너가 장치 cgroup 때문에 장치를 열 수 없음. 운영은 Shamir, ADR-010) | `KMS_TPM_SIMULATOR=true`(시뮬레이터) 또는 `KMS_TPM_DEVICE`(실제 장치, 기본 `/dev/tpmrm0`) |
 | `k8s` | K8s Secret 위임 | `KMS_K8S_NAMESPACE`(기본 `default`), `KMS_K8S_SECRET_NAME`(기본 `kms-root-key`) |
 
 리스너 관련 환경변수:
@@ -428,15 +439,22 @@ KMS의 개념을 쿠버네티스 RBAC 어휘로 옮깁니다. 아래는 실제�
 | 리소스 종류 | `keys` |
 | 키 이름 | `resourceNames` |
 | 동작 | verb: `encrypt`, `decrypt`, `rewrap` |
-| 스코프 | 네임스페이스(요청자의 namespace 기준) |
+| 스코프 | 키 이름이 `<ns>.<name>`이면 `<ns>` 네임스페이스(소유 팀), 점이 없으면 클러스터 범위 |
 
-> **네임스페이스 스코프의 의미.** 키 저장소 자체에는 네임스페이스 개념이
-> 없습니다 — 키는 클러스터 전역으로 하나의 목록입니다. 네임스페이스는
-> **접근 권한 판단에만** 쓰입니다. 즉 "team-a의 demo 키"가 따로 존재하는
-> 게 아니라, "demo 키에 대한 team-a 소속 요청자의 권한"을 SAR에 묻는
-> 것입니다. 같은 `demo` 키를 여러 네임스페이스의 ServiceAccount가 서로
-> 다른 권한으로(예: team-a는 encrypt+decrypt, team-b는 encrypt만) 쓸 수
-> 있습니다.
+> **네임스페이스 스코프의 의미 (C+B 키 소유 모델, ADR-009).** 판단 네임스페이스는
+> "요청한 ServiceAccount의 네임스페이스"가 **아니라 키 이름이 정합니다.**
+>
+> - `team-a.payment`처럼 이름에 점이 하나 있는 키는 `team-a` **소유**입니다.
+>   SAR의 namespace는 `team-a`, resourceName은 키 전체 이름이고, **`team-a`
+>   네임스페이스의 Role/RoleBinding만** 효력이 있습니다. 다른 네임스페이스의
+>   ServiceAccount도 소유 팀이 자기 RoleBinding의 subjects에 넣어 주면 쓸 수 있습니다.
+> - 점이 없는 키(예: `demo`)는 **클러스터 전역 키**입니다. SAR을 namespace 없이
+>   보내므로 `ClusterRole`+`ClusterRoleBinding`으로만 허용됩니다.
+>   네임스페이스 Role/RoleBinding은 전역 키에 효력이 없습니다(403).
+> - 키 이름 규칙: `<ns>`는 DNS-1123 label, 점은 최대 1개. 기존 키(점 없음)는 그대로 유효합니다.
+>
+> 이전 규칙(요청자 네임스페이스 기준)에서 옮겨 오려면 `scripts/migrate-rbac-cb.py`를 쓰세요
+> (`docs/release/kms-core-apply.md`).
 
 `seal-profile`/`seal-benchmark`은 인가 대상에서 제외합니다 — 특정 키를
 대상으로 하지 않는 진단용 엔드포인트이고, 애초에 이 둘을 Admin이 아닌
@@ -446,36 +464,67 @@ Transit에 둔 이유가 벤치마크 실행기(Job) 같은 호출자가 키 관
 
 #### Role/RoleBinding 예시
 
+팀 소유 키 `team-a.payment` — `team-a` 네임스페이스의 Role/RoleBinding:
+
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: kms-demo-key-user
+  name: kms-payment-user
   namespace: team-a
 rules:
 - apiGroups: ["kms.local"]
   resources: ["keys"]
-  resourceNames: ["demo"]
+  resourceNames: ["team-a.payment"]
   verbs: ["encrypt", "decrypt"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: kms-demo-key-user-binding
+  name: kms-payment-user-binding
   namespace: team-a
 subjects:
 - kind: ServiceAccount
   name: app-workload
   namespace: team-a
+- kind: ServiceAccount        # 다른 네임스페이스의 SA도 소유 팀이 허용하면 쓸 수 있다
+  name: batch
+  namespace: team-b
 roleRef:
   kind: Role
-  name: kms-demo-key-user
+  name: kms-payment-user
   apiGroup: rbac.authorization.k8s.io
 ```
 
-이 Role/RoleBinding이 있으면 `team-a` 네임스페이스의 `app-workload`
-ServiceAccount는 `demo` 키에 `encrypt`/`decrypt`만 할 수 있고, `rewrap`이나
-다른 키에는 여전히 403을 받습니다.
+전역 키 `demo` — 클러스터 범위 ClusterRole/ClusterRoleBinding (이름 규칙 `kms-cb-<키>-<verbs>`):
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kms-cb-demo-decrypt-encrypt
+rules:
+- apiGroups: ["kms.local"]
+  resources: ["keys"]
+  resourceNames: ["demo"]
+  verbs: ["decrypt", "encrypt"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kms-cb-demo-decrypt-encrypt
+subjects:
+- kind: ServiceAccount
+  name: app-workload
+  namespace: team-a
+roleRef:
+  kind: ClusterRole
+  name: kms-cb-demo-decrypt-encrypt
+  apiGroup: rbac.authorization.k8s.io
+```
+
+첫 예시에서 `app-workload`는 `team-a.payment`에 `encrypt`/`decrypt`만 할 수 있고 `rewrap`이나
+다른 키에는 403을 받습니다. `demo`처럼 점 없는 키에 **네임스페이스 Role**만 있으면 403입니다.
 
 #### 환경변수
 

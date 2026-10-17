@@ -11,6 +11,8 @@
 package metrics
 
 import (
+	"sync/atomic"
+
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
@@ -55,6 +57,31 @@ var (
 		Help:      "처리한 평문/암호문 크기(바이트) (operation별).",
 		Buckets:   transitSizeBuckets,
 	}, []string{"operation"})
+
+	// AuditDroppedTotal: Transit 비동기 감사 버퍼가 가득 차 버려진(기록하지 못한) 이벤트 수.
+	// 0이 아니면 감사 기록에 구멍이 있다는 뜻이다 — 버퍼 크기/디스크 처리량을 점검한다.
+	AuditDroppedTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Namespace: "kms",
+		Subsystem: "audit",
+		Name:      "dropped_total",
+		Help:      "Transit 비동기 감사에서 버퍼 포화 등으로 버려진 이벤트 수.",
+	})
+
+	// ExternalRequestsTotal: 외부(인터넷) 리스너가 받은 요청 수 (result: success/error). IP·주체·키는 라벨에 넣지 않는다.
+	ExternalRequestsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "kms",
+		Subsystem: "external",
+		Name:      "requests_total",
+		Help:      "외부 리스너 요청 수 (result별).",
+	}, []string{"result"})
+
+	// ExternalRejectedTotal: 외부 리스너가 429로 거절한 요청 수 (reason: rate=요청 수 제한, authfail=인증 실패 과다로 차단).
+	ExternalRejectedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "kms",
+		Subsystem: "external",
+		Name:      "rejected_total",
+		Help:      "외부 리스너의 429 거절 수 (reason별: rate, authfail).",
+	}, []string{"reason"})
 
 	// AuthzSARRequestsTotal: SubjectAccessReview 호출 수. result는
 	// allowed/denied/error다. 주체·namespace는 라벨에 넣지 않는다.
@@ -106,3 +133,22 @@ var (
 		Buckets:   prometheus.DefBuckets,
 	})
 )
+
+// externalBlockedSource: 현재 차단 중인 IP 수를 돌려주는 함수 (외부 리스너가 켜질 때 등록한다).
+var externalBlockedSource atomic.Pointer[func() int]
+
+// SetExternalBlockedSource는 차단 중인 IP 개수 공급자를 등록한다. 지표에는 개수만 내보내고 IP 값은 어디에도
+// 라벨로 쓰지 않는다 (cardinality/정보 노출).
+func SetExternalBlockedSource(f func() int) { externalBlockedSource.Store(&f) }
+
+var _ = promauto.NewGaugeFunc(prometheus.GaugeOpts{
+	Namespace: "kms",
+	Subsystem: "external",
+	Name:      "blocked_ips",
+	Help:      "인증 실패 과다로 현재 차단 중인 클라이언트 IP 수.",
+}, func() float64 {
+	if f := externalBlockedSource.Load(); f != nil {
+		return float64((*f)())
+	}
+	return 0
+})

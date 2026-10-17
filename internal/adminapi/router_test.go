@@ -156,26 +156,61 @@ func TestRouter_Dashboard_MountedOnlyWhenConfigured(t *testing.T) {
 	}
 }
 
-// seal-migrate는 관리 API 허용 목록에 있어야 한다(POST만; 없는 소켓이면 프록시가 502/503).
-func TestRouter_SealMigrateIsAllowlistedPOSTOnly(t *testing.T) {
+// seal-migrate는 관리 API 허용 목록에 없어야 한다: 이번 운영 적용은 init 기록 v1을 유지해야 이전 이미지로 되돌릴 수 있는데,
+// 조각 재발급(target=shamir)도 기록을 v2로 올린다. 필요하면 서버의 관리 소켓으로 직접 실행한다.
+func TestRouter_SealMigrateIsNotExposedThroughAdminAPI(t *testing.T) {
 	router := adminapi.NewRouter(adminapi.Deps{SocketPath: filepath.Join(t.TempDir(), "unused.sock")})
 	srv := httptest.NewServer(router)
 	t.Cleanup(srv.Close)
+	for _, body := range []string{`{"target":"tpm"}`, `{"target":"shamir"}`} {
+		resp, err := http.Post(srv.URL+"/v1/sys/seal-migrate", "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusMethodNotAllowed {
+			t.Fatalf("POST seal-migrate = %d; must not be proxied", resp.StatusCode)
+		}
+	}
+}
 
-	resp, err := http.Post(srv.URL+"/v1/sys/seal-migrate", "application/json", strings.NewReader(`{"target":"tpm"}`))
+// 키 수명 주기 경로는 관리 API 허용 목록에 있어야 한다 (POST만).
+func TestRouter_KeyLifecycleRoutesAllowlistedPOSTOnly(t *testing.T) {
+	router := adminapi.NewRouter(adminapi.Deps{SocketPath: filepath.Join(t.TempDir(), "unused.sock")})
+	srv := httptest.NewServer(router)
+	t.Cleanup(srv.Close)
+	for _, op := range []string{"disable", "enable", "schedule-deletion", "cancel-deletion"} {
+		resp, err := http.Post(srv.URL+"/v1/keys/app/"+op, "application/json", strings.NewReader(`{}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed {
+			t.Fatalf("POST %s = %d; not allowlisted", op, resp.StatusCode)
+		}
+		resp, _ = http.Get(srv.URL + "/v1/keys/app/" + op)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusMethodNotAllowed && resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("GET %s = %d", op, resp.StatusCode)
+		}
+	}
+}
+
+func TestRouter_SealProfileIsAllowlistedGETOnly(t *testing.T) {
+	router := adminapi.NewRouter(adminapi.Deps{SocketPath: filepath.Join(t.TempDir(), "unused.sock")})
+	srv := httptest.NewServer(router)
+	t.Cleanup(srv.Close)
+	resp, err := http.Get(srv.URL + "/v1/sys/seal-profile")
 	if err != nil {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed {
-		t.Fatalf("POST status = %d; route not registered", resp.StatusCode)
+		t.Fatalf("GET seal-profile = %d; not allowlisted", resp.StatusCode)
 	}
-	resp, err = http.Get(srv.URL + "/v1/sys/seal-migrate")
-	if err != nil {
-		t.Fatal(err)
-	}
+	resp, _ = http.Post(srv.URL+"/v1/sys/seal-profile", "application/json", strings.NewReader("{}"))
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusMethodNotAllowed && resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("GET status = %d, want 404/405", resp.StatusCode)
+		t.Fatalf("POST seal-profile = %d", resp.StatusCode)
 	}
 }

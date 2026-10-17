@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -14,19 +15,31 @@ import (
 func Server(addr string, h http.Handler) *http.Server {
 	return &http.Server{Addr: addr, Handler: Limit(h), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12}}
 }
+
+// bodyLimit: 요청 본문 상한(바이트).
+const bodyLimit = 2 << 20
+
+func writeLimitError(w http.ResponseWriter, status int, body string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_, _ = w.Write([]byte(body + "\n"))
+}
+
 func Limit(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		if r.Body != nil {
-			b, e := io.ReadAll(io.LimitReader(r.Body, (2<<20)+1))
+			b, e := io.ReadAll(io.LimitReader(r.Body, bodyLimit+1))
 			r.Body.Close()
 			if e != nil {
-				http.Error(w, "invalid body", 400)
+				writeLimitError(w, 400, `{"error":"bad_request","message":"invalid request body"}`)
 				return
 			}
-			if len(b) > 2<<20 {
-				http.Error(w, "body too large", 413)
+			if len(b) > bodyLimit {
+				// 다운로드 주소 같은 외부 링크는 넣지 않는다 (힌트는 사용 방법만).
+				// data key API(POST /v1/datakey/{name})로 받은 키로 클라이언트에서 암호화하도록 안내한다.
+				writeLimitError(w, 413, fmt.Sprintf(`{"error":"payload_too_large","message":"request body exceeds the limit","limit_bytes":%d,"hint":"use the datakey API (POST /v1/datakey/{name}) and encrypt client-side"}`, bodyLimit))
 				return
 			}
 			r.Body = io.NopCloser(strings.NewReader(string(b)))

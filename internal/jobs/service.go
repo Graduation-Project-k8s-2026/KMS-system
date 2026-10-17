@@ -291,7 +291,12 @@ func respond(w http.ResponseWriter, status int, v any) {
 func (s *Service) Mount(r chi.Router) {
 	r.Post("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
 		var spec Spec
-		if decode(r, &spec) != nil || spec.Validate() != nil {
+		if decode(r, &spec) != nil {
+			http.Error(w, "invalid job parameters", 400)
+			return
+		}
+		spec.Normalize()
+		if spec.Validate() != nil {
 			http.Error(w, "invalid job parameters", 400)
 			return
 		}

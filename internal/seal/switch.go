@@ -23,6 +23,10 @@ var _ TPMBackend = (*TPMSeal)(nil)
 // ErrTPMUnavailable: TPM 장치를 열 수 없어 TPM 동작을 할 수 없을 때.
 var ErrTPMUnavailable = errors.New("seal: TPM unavailable")
 
+// ErrTPMNotAllowed: 서버 설정(KMS_SEAL_ALLOWED)이 TPM을 허용하지 않을 때. 장치 문제가 아니라 정책이므로
+// 호출자(관리 API)는 이것을 4xx로 거부한다. ErrTPMUnavailable도 함께 만족한다(errors.Is).
+var ErrTPMNotAllowed = fmt.Errorf("%w: TPM seal is not allowed on this server (KMS_SEAL_ALLOWED)", ErrTPMUnavailable)
+
 // Switch는 Shamir와 TPM 두 방식을 한 서버 안에서 오가게 해 주는 Seal이다.
 //
 // 왜 필요한가: barrier는 Seal 인스턴스를 하나만 들고 있다. 그런데 봉인 방식
@@ -79,7 +83,7 @@ func (s *Switch) TPM() (TPMBackend, error) {
 		return s.tpm, nil
 	}
 	if s.open == nil {
-		return nil, fmt.Errorf("%w: no TPM device configured", ErrTPMUnavailable)
+		return nil, ErrTPMNotAllowed
 	}
 	t, err := s.open()
 	if err != nil {

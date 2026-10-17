@@ -29,6 +29,7 @@ import (
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/audit"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/kmsv2"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/security"
+	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/tlsreload"
 	"google.golang.org/grpc"
 	pb "k8s.io/kms/apis/v2"
 	"log"
@@ -69,7 +70,8 @@ const adminSocketPerm = 0o600
 
 func main() {
 	cert, key := os.Getenv("KMS_TRANSIT_TLS_CERT"), os.Getenv("KMS_TRANSIT_TLS_KEY")
-	pair, err := tls.LoadX509KeyPair(cert, key)
+	// 인증서 파일이 바뀌면(30초 이내 확인) 재시작 없이 새 인증서를 쓴다. 처음 읽기에 실패하면 기동 실패.
+	tlsReload, err := tlsreload.New(cert, key)
 	if err != nil {
 		log.Fatal("Transit TLS certificate/key required")
 	}
@@ -82,6 +84,19 @@ func main() {
 	auditLog, err := audit.New(os.Getenv("KMS_AUDIT_DIR"))
 	if err != nil {
 		log.Fatal(err)
+	}
+
+	// Transit 요청 감사(비동기). KMS_TRANSIT_AUDIT_DIR이 비어 있으면 끈다. 관리 감사(KMS_AUDIT_DIR)와는
+	// 파일 형식·위치가 별개다. 버퍼가 가득 차면 요청을 막지 않고 버리고 kms_audit_dropped_total을 올린다.
+	var transitAudit *audit.TransitLog
+	if dir := os.Getenv("KMS_TRANSIT_AUDIT_DIR"); dir != "" {
+		transitAudit, err = audit.NewTransit(dir,
+			getenvIntDefault("KMS_TRANSIT_AUDIT_BUFFER", audit.DefaultTransitBuffer),
+			time.Duration(getenvIntDefault("KMS_TRANSIT_AUDIT_FSYNC_MS", int(audit.DefaultTransitFsync/time.Millisecond)))*time.Millisecond)
+		if err != nil {
+			log.Fatalf("transit audit: %v", err)
+		}
+		defer transitAudit.Close() // 정상 종료 시 남은 기록을 flush한다
 	}
 
 	storageKind := getenvDefault("KMS_STORAGE", "file")
@@ -193,6 +208,16 @@ func main() {
 	}
 	sealer.SetMode(sealMode)
 	km := keys.NewKeyManager(b)
+	// 보호 키: 비활성화·삭제 예약이 거부되는 키. KMS v2 키는 kmsv2.New가 자동으로 보호하므로 설정이
+	// 비어 있어도 안전하다. KMS_PROTECTED_KEYS(쉼표 목록)로 키를 더 지정할 수 있다.
+	for _, name := range strings.Split(os.Getenv("KMS_PROTECTED_KEYS"), ",") {
+		if name = strings.TrimSpace(name); name != "" {
+			if _, _, err := keys.ParseName(name); err != nil {
+				log.Fatalf("invalid KMS_PROTECTED_KEYS entry %q", name)
+			}
+			km.Protect(name)
+		}
+	}
 	v2Name := getenvDefault("KMS_V2_KEY_NAME", "k8s-secrets")
 	if !regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`).MatchString(v2Name) {
 		log.Fatal("invalid reserved KMS v2 key name")
@@ -204,6 +229,19 @@ func main() {
 	}))
 
 	defer scheduler.Stop()
+
+	// 삭제 유예가 끝난 키를 지우는 백그라운드 작업. 삭제는 되돌릴 수 없으므로 지우기 전과 후에 관리 감사
+	// 기록을 남기고, 기록이 실패하면 삭제하지 않는다.
+	reaper := rotation.NewReaper(km, time.Duration(getenvIntDefault("KMS_KEY_REAPER_INTERVAL_SEC", 600))*time.Second,
+		func(name string) error {
+			return auditLog.Write(audit.Event{Subject: "system:key-reaper", Action: "key purge requested", Key: name, Allowed: true})
+		},
+		func(name string) {
+			if err := auditLog.Write(audit.Event{Subject: "system:key-reaper", Action: "key purge completed", Key: name, Allowed: true, Success: true}); err != nil {
+				log.Printf("key reaper: audit write after purge failed: %v", err)
+			}
+		})
+	defer reaper.Stop()
 
 	// Shamir 모드는 항상 사람이 조각을 넣어야 한다(자동 해제 거부). TPM 모드는 자동
 	// 해제가 목적이라 이 규칙을 적용하지 않는다 — 아래에서 기동 시 TPM 해제를 시도한다.
@@ -221,14 +259,16 @@ func main() {
 		log.Fatalf("KMS_AUTHZ=on but building the authorizer failed: %v", err)
 	}
 
-	transitRouter := transit.NewRouter(transit.Deps{
+	transitDeps := transit.Deps{
 		ReservedKey: v2Name,
 		Barrier:     b,
 		Transit:     ts,
 		Seal:        sealer,
 		Verifier:    verifier,
 		Authorizer:  authorizer,
-	})
+		Audit:       transitAudit, // KMS_TRANSIT_AUDIT_DIR이 비어 있으면 nil(감사 꺼짐)
+	}
+	transitRouter := transit.NewRouter(transitDeps)
 	onUnseal := func() error {
 		_, err := km.GetKeyMeta(v2Name)
 		if errors.Is(err, &keys.KeyNotFoundError{}) {
@@ -238,6 +278,7 @@ func main() {
 			return err
 		}
 		scheduler.Start()
+		reaper.Start()
 		return nil
 	}
 
@@ -261,7 +302,7 @@ func main() {
 		Keys:            km,
 		Seal:            sealer,
 		OnUnseal:        onUnseal,
-		OnSeal:          scheduler.Stop,
+		OnSeal:          func() { scheduler.Stop(); reaper.Stop() },
 		ReservedKey:     v2Name,
 		ShamirParts:     shamirParts,
 		ShamirThreshold: shamirThreshold,
@@ -304,7 +345,7 @@ func main() {
 			v2Errs <- err
 		}
 	}()
-	transitListener = tls.NewListener(transitListener, &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{pair}})
+	transitListener = tls.NewListener(transitListener, tlsReload.Config())
 	adminRouter = auditLog.Middleware(audit.PeerSubject, adminRouter)
 
 	adminHTTP := security.Server("", adminRouter)
@@ -312,6 +353,29 @@ func main() {
 	servers := []namedServer{
 		{"transit", security.Server("", metrics.AllHTTP(transitRouter)), transitListener},
 		{"admin", adminHTTP, adminListener},
+	}
+
+	// 외부(인터넷 공개) 리스너: KMS_EXTERNAL_ADDR이 비어 있으면 꺼진다. Transit과 같은 인증서(재로딩 포함)를 쓰고,
+	// 암복호화 4개 경로와 /healthz만 연다. 방어선(요청자·키 네임스페이스 제한, IP별 요청 수 제한·인증 실패 차단)은
+	// transit.NewExternalRouter 주석 참고. hostNetwork 파드라 별도 Service 없이 노드 주소로 바로 받는다.
+	extAddr := os.Getenv("KMS_EXTERNAL_ADDR")
+	if reason := externalDisabledReason(extAddr, verifier != nil, authorizer != nil, os.Getenv("KMS_AUTHZ_FAIL_OPEN") == "true"); reason != "" {
+		// fail-closed: 인증·인가가 완전하지 않으면 인터넷 공개 포트를 열지 않는다. 서버 전체와 내부 리스너는 정상 기동한다.
+		log.Printf("external listener NOT started: %s", reason)
+	} else if extAddr != "" {
+		extListener, err := net.Listen("tcp", extAddr)
+		if err != nil {
+			log.Fatalf("failed to listen on external address %q: %v", extAddr, err)
+		}
+		extRouter := transit.NewExternalRouter(transitDeps, transit.ExternalConfig{
+			SubjectNamespaces: splitCSV(getenvDefault("KMS_EXTERNAL_SUBJECT_NAMESPACES", "kms-external")),
+			KeyNamespaces:     splitCSV(getenvDefault("KMS_EXTERNAL_KEY_NAMESPACES", "kms-external")),
+			RPS:               float64(getenvIntDefault("KMS_EXTERNAL_RPS", 20)),
+			Burst:             getenvIntDefault("KMS_EXTERNAL_BURST", 40),
+			AuthFailMax:       getenvIntDefault("KMS_EXTERNAL_AUTHFAIL_MAX", 10),
+		})
+		servers = append(servers, namedServer{"external", security.Server("", extRouter), tls.NewListener(extListener, tlsReload.Config())})
+		log.Printf("external listener enabled on %s", extAddr)
 	}
 
 	metricsStatus := "disabled (KMS_METRICS_ADDR=\"\")"
@@ -565,6 +629,33 @@ func parseAllowedSeals(v string) (map[string]bool, error) {
 		return nil, errors.New("KMS_SEAL_ALLOWED must list at least one of shamir, tpm")
 	}
 	return out, nil
+}
+
+// externalDisabledReason은 외부 리스너를 띄우면 안 되는 이유를 돌려준다 (""이면 괜찮음 또는 애초에 꺼져 있음).
+// 외부 리스너는 인터넷에 공개되므로 토큰 검증(authn), 인가(authz), 그리고 SAR 실패 시 거부(fail-closed)가 모두 필요하다.
+func externalDisabledReason(addr string, hasVerifier, hasAuthorizer, failOpen bool) string {
+	switch {
+	case addr == "":
+		return ""
+	case !hasVerifier:
+		return "KMS_AUTHN is off (no token verification)"
+	case !hasAuthorizer:
+		return "KMS_AUTHZ is off (no authorization)"
+	case failOpen:
+		return "KMS_AUTHZ_FAIL_OPEN=true (authorization would fail open)"
+	}
+	return ""
+}
+
+// splitCSV는 쉼표 목록을 공백 제거 후 빈 항목 없이 나눈다.
+func splitCSV(v string) []string {
+	var out []string
+	for _, f := range strings.Split(v, ",") {
+		if f = strings.TrimSpace(f); f != "" {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 func getenvDefault(key, fallback string) string {

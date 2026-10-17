@@ -1,0 +1,15 @@
+# 외부(인터넷 공개) 사용자용 네임스페이스. KMS 외부 리스너(KMS_EXTERNAL_ADDR)는 이 네임스페이스의 ServiceAccount만 받고,
+# 키 이름도 kms-external.<이름> 형태(이 네임스페이스 소유, ADR-009)만 받는다. 사용자별 리소스(SA, Role, RoleBinding)는
+# 여기에 쓰지 않는다 — scripts/kms-external-user.sh 가 만든다.
+#
+# 사용자 한 명을 추가하는 예 (서버에서 사람이 실행):
+#   scripts/kms-external-user.sh add alice orders      # SA kms-external/alice, 키 kms-external.orders
+#   scripts/kms-external-user.sh token alice 1         # 1시간짜리 토큰을 표준 출력으로
+#   scripts/kms-external-user.sh remove alice
+# 접속에는 내부 CA 인증서(공개값)가 필요하다: docs/usage.md의 "외부에서 사용하기".
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kms-external
+  labels:
+    app.kubernetes.io/part-of: kms-system

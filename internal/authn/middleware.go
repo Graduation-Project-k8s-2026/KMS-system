@@ -21,14 +21,14 @@ func Middleware(v *Verifier) func(http.Handler) http.Handler {
 			token, ok := strings.CutPrefix(header, bearerPrefix)
 			if !ok || token == "" {
 				log.Print("authn: rejected missing credential")
-				httputil.WriteJSONError(w, http.StatusUnauthorized, "unauthorized")
+				httputil.WriteAPIError(w, http.StatusUnauthorized, "unauthorized", "authentication required", "send a valid ServiceAccount token as a Bearer credential")
 				return
 			}
 
 			identity, err := v.Verify(token)
 			if err != nil {
 				log.Print("authn: rejected invalid credential")
-				httputil.WriteJSONError(w, http.StatusUnauthorized, "unauthorized")
+				httputil.WriteAPIError(w, http.StatusUnauthorized, "unauthorized", "authentication required", "send a valid ServiceAccount token as a Bearer credential")
 				return
 			}
 

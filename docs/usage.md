@@ -44,6 +44,17 @@ go run ./cmd/admin-api
 | `KMS_SHAMIR_THRESHOLD` | 3 | 복원에 필요한 조각 수 |
 | `KMS_TPM_SIMULATOR` | false | TPM 시뮬레이터 사용 |
 | `KMS_TPM_DEVICE` | `/dev/tpmrm0` | 실제 TPM 장치 경로 |
+| `KMS_SEAL_ALLOWED` | `shamir,tpm` | 운영 서버의 허용 봉인 방식(실제 방식은 init 기록이 정함, ADR-010). **운영 배포 템플릿은 `shamir`** — 이때 `seal-migrate target=tpm`은 403 |
+| `KMS_TRANSIT_AUDIT_DIR` | (비움=끔) | Transit 요청 비동기 감사 파일 디렉터리 (키 이름·주체·결과·지연; 본문 미기록) |
+| `KMS_TRANSIT_AUDIT_BUFFER` | 8192 | 감사 버퍼 크기. 가득 차면 요청을 막지 않고 버리며 `kms_audit_dropped_total`이 오른다 |
+| `KMS_TRANSIT_AUDIT_FSYNC_MS` | 1000 | 감사 fsync 주기(ms) |
+| `KMS_EXTERNAL_ADDR` | (비움=끔) | 외부(인터넷 공개) 리스너 주소. 템플릿 기본 `0.0.0.0:9443` |
+| `KMS_EXTERNAL_SUBJECT_NAMESPACES` | `kms-external` | 외부 리스너가 받는 요청자 SA의 네임스페이스(쉼표 목록) |
+| `KMS_EXTERNAL_KEY_NAMESPACES` | `kms-external` | 외부 리스너가 받는 키 `<ns>.<name>`의 ns(쉼표 목록) |
+| `KMS_EXTERNAL_RPS` / `KMS_EXTERNAL_BURST` | 20 / 40 | 클라이언트 IP별 초당 요청 수 / 버스트. 넘으면 429 `rate_limited` |
+| `KMS_EXTERNAL_AUTHFAIL_MAX` | 10 | IP당 1분 내 인증 실패(401) 허용 횟수. 넘으면 5분 차단(429) |
+| `KMS_PROTECTED_KEYS` | (비움) | 비활성화·삭제 예약을 거부할 키 목록(쉼표). KMS v2 키(`KMS_V2_KEY_NAME`)는 자동 보호 |
+| `KMS_KEY_REAPER_INTERVAL_SEC` | 600 | 삭제 유예가 끝난 키를 점검하는 주기(초) |
 | `KMS_STORAGE` | `file` | 저장 백엔드: `memory`\|`file` |
 | `KMS_DATA_DIR` | `./data` | file 저장소 경로 |
 | `KMS_TRANSIT_ADDR` | `:8200` | Transit 리스너 주소 (`PORT`도 하위호환 인식) |
@@ -126,7 +137,7 @@ seal 방식별 동작:
 |---|---|---|
 | dev | 별도 단계 없음 (패스프레이즈에서 결정적 유도) | 즉시 |
 | shamir | 조각 N개 발급 — **이 순간 한 번만 표시됨** | threshold개 조각 제출 |
-| tpm | 바로 완료 | 자동 |
+| tpm | 바로 완료 | 자동 (코드·시뮬레이터 검증만; 운영 배포 보류) |
 | k8s | 바로 완료 | 자동 |
 
 > `init`은 서버 수명 동안 **한 번만** 실행된다. 재실행하면 오류.
@@ -157,6 +168,124 @@ curl --unix-socket $SOCK http://localhost/v1/keys/demo
   "Versions": [{"Version": 1, "CreatedAt": "..."}]
 }
 ```
+
+### 키 수명 주기 — 사용 중지 → 삭제 예약 → 삭제
+
+키를 곧바로 지우면 그 키로 암호화한 데이터를 영구히 못 푼다. 그래서 단계를 둔다 (관리 소켓 전용).
+조회 응답에 `state`(`active`\|`disabled`\|`pending_deletion`)와 `deletion_date`가 들어간다.
+
+```bash
+curl --unix-socket $SOCK -XPOST http://localhost/v1/keys/demo/disable          # 사용 중지
+curl --unix-socket $SOCK -XPOST http://localhost/v1/keys/demo/enable           # 다시 사용
+curl --unix-socket $SOCK -XPOST http://localhost/v1/keys/demo/schedule-deletion \
+  -H 'content-type: application/json' -d '{"pending_days": 14}'                # 7~30일(기본 30), deletion_date 반환
+curl --unix-socket $SOCK -XPOST http://localhost/v1/keys/demo/cancel-deletion  # 취소 → disabled (다시 쓰려면 enable)
+```
+
+`disabled`/`pending_deletion` 키의 encrypt/decrypt/rewrap은 `409 key_not_active`이고 자동 회전도 건너뛴다.
+유예가 지나면 백그라운드 작업이 키 자료를 삭제한다(되돌릴 수 없음, 관리 감사에 기록, 봉인 해제 상태에서만).
+KMS v2 키와 `KMS_PROTECTED_KEYS`의 키는 `409 key_protected`로 거부된다.
+
+### data key — 봉투 암호화를 클라이언트에서
+
+큰 데이터는 KMS로 보내지 않고, KMS에서 1회용 데이터 키를 받아 로컬에서 암호화한다(권한: verb `datakey`).
+
+```bash
+# 키 받기 (기본 256비트, 평문 키 포함)
+curl -s -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' -d '{}' https://<주소>/v1/datakey/<키>
+# → {"ciphertext":"kms:v1:...","plaintext":"<base64 키>","key_version":1}
+#   {"bits":128} 로 128비트, {"plaintext":false} 로 암호문만 받을 수도 있다
+```
+
+클라이언트는 `plaintext` 키로 데이터를 AES-GCM 등으로 암호화하고 키를 버린 뒤 `ciphertext`(키의 암호문)를 데이터와 함께 저장한다.
+복호화할 때는 저장해 둔 `ciphertext`를 `POST /v1/decrypt/<키>`에 보내 평문 키를 되찾는다. 키를 회전해도 이전 data key 암호문은
+`min_decryption_version`이 허용하는 동안 복호화된다.
+
+### 외부에서 사용하기 (인터넷 공개 경로)
+
+운영자가 외부 사용자 한 명을 만든다 (서버에서):
+
+```bash
+scripts/kms-external-user.sh add alice orders      # SA kms-external/alice, 키 kms-external.orders (권한: encrypt/decrypt/rewrap/datakey)
+scripts/kms-external-user.sh token alice 1         # 1시간(최대 24시간)짜리 토큰이 표준 출력으로 나온다
+```
+
+**내부 CA 인증서(공개값)를 사용자에게 전달**한다(`sudo cat <내부 CA 인증서 경로>`, PEM 텍스트). CA *키*는 절대 보내지 않는다.
+사용자는 이를 `ca.crt`로 저장한다.
+
+```bash
+B=https://<공인 주소>:9443
+curl --cacert ca.crt $B/healthz
+curl --cacert ca.crt -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+     -d '{"plaintext":"aGVsbG8="}' $B/v1/encrypt/kms-external.orders
+curl --cacert ca.crt -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' -d '{}' $B/v1/datakey/kms-external.orders
+```
+
+외부에서는 `encrypt|decrypt|rewrap|datakey`만 되고 키 이름은 `kms-external.<이름>`이어야 한다(그 외는 모두 같은 403). 요청이 너무 많으면
+`429 rate_limited`(`Retry-After` 헤더), 잘못된 토큰을 반복하면 5분간 차단된다. 내부 ServiceAccount 토큰은 외부에서 403이다.
+
+### CLI (`kms`) — 외부 사용자용
+
+외부 사용자는 `curl` 대신 CLI로 쓸 수 있다. 큰 파일은 자동으로 data key 방식(KMSF 파일 형식)으로 암호화한다.
+
+1. **CA 인증서 받기**: 관리자에게 내부 CA의 *공개* 인증서(PEM 파일)를 받아 `ca.crt`로 저장한다. (CA 키는 받지 않는다.)
+2. **설치**: 관리자가 알려 준 배포 주소로 `KMS_CLI_URL=<배포 URL> ./install.sh` (체크섬 검증 후 `~/.local/bin/kms`에 설치, [y/N] 확인).
+   직접 빌드하려면 `scripts/build-cli.sh` → `dist/`.
+3. **login**: 서버 주소와 CA를 기억시킨다 (`~/.config/kms/config.json`, 권한 0600). 토큰은 **기본적으로 저장하지 않는다.**
+
+```bash
+kms login --addr https://<공인 주소>:9443 --ca ca.crt --token-file ~/kms.token   # 토큰 파일 '경로'만 기억 (또는 환경변수 KMS_TOKEN)
+export KMS_TOKEN=$(cat ~/kms.token)                                              # 파일 대신 환경변수를 써도 된다
+kms login ... --token-stdin --save-token                                          # 설정 파일(0600)에 토큰까지 저장하려면 명시해야 한다
+```
+
+4. **암호화·복호화**
+
+```bash
+echo -n 'hello' | kms encrypt kms-external.orders                    # → kms:v1:... (1MiB 이하는 Transit encrypt)
+kms decrypt kms-external.orders -i secret.txt.kms -o secret.txt      # kms:v.. 문자열은 키 이름이 필요하다
+kms encrypt kms-external.orders -i backup.tar -o backup.tar.kmsf     # 1MiB 초과는 자동으로 datakey + KMSF 파일
+kms decrypt -i backup.tar.kmsf -o backup.tar                         # KMSF 파일은 키 이름이 헤더에 있다 (형식은 앞 4바이트로 판별)
+kms encrypt k --mode file ...                                        # --mode transit|file 로 강제
+kms datakey kms-external.orders [--no-plaintext]                     # data key를 직접 받기
+kms version
+```
+
+복호화에 실패한 결과(변조·잘림)는 출력 파일을 남기지 않는다. 오류는 서버의 `{error,message,hint}`를 한국어 안내로 보여 주고,
+429이면 `Retry-After`를 보고 재시도 시간을 알려 준다. 토큰·평문은 오류 메시지에 나오지 않는다.
+
+**KMSF 파일 형식**(`pkg/kmsfile`): 헤더(`KMSF`, 버전, 키 이름, data key 암호문, 청크 크기, 기본 nonce) + 64KiB 청크별 AES-256-GCM.
+nonce는 청크마다 다르고 AAD에 헤더 해시·청크 번호·마지막 청크 여부가 들어가 순서 바꾸기·잘라내기·덧붙이기를 탐지한다.
+웹 포털의 "파일 암호화" 탭이 만든 파일도 같은 형식이라 CLI로 풀 수 있다.
+
+### 봉인 방식 이전 (서버의 관리 소켓에서만)
+
+TPM 전환과 조각 재발급(`POST /v1/sys/seal-migrate`)은 **관리 API 허용 목록에서 뺐고 관리 화면에도 버튼이 없다.** 이번 운영 적용은 init 기록 v1을 유지해야 이전 서버 이미지로
+되돌릴 수 있는데, 조각 재발급(`target=shamir`)도 기록을 v2로 올리기 때문이다. TPM 배포는 보류 중이라(ADR-010) `KMS_SEAL_ALLOWED=shamir`에서 `target=tpm`은 403 `seal_not_allowed`다.
+꼭 필요하면 서버에서 관리 소켓으로 직접 실행한다(이후 이전 이미지로 되돌릴 수 없음을 알고서):
+
+```bash
+sudo sh -c 'umask 077; curl -sS -o /dev/shm/seal-migrate.json -w "%{http_code}\n" --unix-socket /run/custom-kms/admin/admin.sock \
+  -X POST -H "Content-Type: application/json" -d "{\"target\":\"shamir\"}" http://localhost/v1/sys/seal-migrate'   # 응답의 새 조각을 한 번만 보관 후 shred -u
+```
+
+### 사용자 포털 (tailnet 전용 시험 도구)
+
+`scripts/deploy-user-portal.sh`로 배포하는 포털은 **Tailscale 8443을 통한 tailnet 전용 시험·시연 도구**다. 인터넷에 공개하지 않으며 사용자 토큰을 입력받지 않는다(포털 서버가 자기 서비스 계정으로 KMS를 부른다).
+"파일 암호화" 탭은 파일을 **브라우저 안에서** 암호화·복호화한다(원문은 서버로 가지 않고, 결과는 CLI와 호환되는 KMSF 파일). 외부 사용자는 포털이 아니라 CLI나 외부 리스너(위 "외부에서 사용하기")를 쓴다.
+
+### 관리 화면 미리보기 (서버 없이)
+
+```bash
+python3 scripts/preview-admin-ui.py            # http://127.0.0.1:8099/v2/ — 가짜 데이터, 키 상태 버튼은 메모리에서만 바뀐다
+python3 scripts/preview-admin-ui.py --role viewer --sealed
+```
+
+### 오류 응답 형식
+
+모든 오류는 `{"error":"<기계용 코드>","message":"<사람용 설명>","hint":"<선택>"}` JSON이다(상태 코드는 그대로).
+키 이름·버전 숫자는 응답에 넣지 않는다(예: 최소 복호화 버전 거부는 `version_not_allowed`, 상세는 감사 로그에만).
+본문이 2 MiB를 넘으면 `413 {"error":"payload_too_large","limit_bytes":...}`.
 
 ### 암복호화
 
@@ -253,7 +382,8 @@ KMS_AUTHZ=on KMS_KUBECONFIG=/path/to/kubeconfig \
 ... go run ./cmd/server
 ```
 
-관리자가 `kubectl`로 권한을 정의한다.
+관리자가 `kubectl`로 권한을 정의한다. 키 소유 규칙(C+B, ADR-009): `<ns>.<name>` 키는 `<ns>`
+네임스페이스의 Role/RoleBinding, 점 없는 전역 키는 ClusterRole/ClusterRoleBinding으로만 허용된다.
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -264,7 +394,7 @@ metadata:
 rules:
 - apiGroups: ["kms.local"]
   resources: ["keys"]
-  resourceNames: ["demo"]
+  resourceNames: ["team-a.demo"]    # team-a 소유 키
   verbs: ["encrypt"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

@@ -50,9 +50,9 @@ func TestApplyRateLimit_Positive_UsesGivenValues(t *testing.T) {
 // 속도 제한이 꺼지는지 확인한다.
 func TestApplyRateLimit_Negative_DisablesViaRateLimiter(t *testing.T) {
 	cases := []struct {
-		name       string
-		qps        float32
-		burst      int
+		name  string
+		qps   float32
+		burst int
 	}{
 		{"negative QPS", -1, 100},
 		{"negative burst", 50, -1},
@@ -78,7 +78,7 @@ func TestApplyRateLimit_Negative_DisablesViaRateLimiter(t *testing.T) {
 }
 
 // fakeRoundTripper는 실제 네트워크 호출 없이 instrumentTransport를 테스트
-//하기 위한 최소한의 http.RoundTripper다.
+// 하기 위한 최소한의 http.RoundTripper다.
 type fakeRoundTripper struct {
 	resp *http.Response
 	err  error

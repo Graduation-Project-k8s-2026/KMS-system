@@ -155,15 +155,14 @@ apiserver의 TokenReview를 쓰지 않는 이유는 `docs/decisions.md` ADR-003 
 | 리소스 | `keys` |
 | 키 이름 | `resourceNames` |
 | 동작 | verb: `encrypt`, `decrypt`, `rewrap` |
-| 스코프 | 네임스페이스 (요청자 기준) |
+| 스코프 | 키 이름 `<ns>.<name>`이면 `<ns>`(소유 네임스페이스), 점이 없으면 클러스터 범위 (ADR-009) |
 
 `kms.local/keys`는 실제로 존재하는 쿠버네티스 리소스가 아니다.
 SAR은 가상 리소스에 대한 질의도 허용하므로 이 방식이 성립한다.
 
-**네임스페이스 스코프 주의**: 키 저장소에는 네임스페이스 개념이 없다.
-키는 클러스터 전역 목록이며, 네임스페이스는 **권한 판단에만** 사용한다.
-"team-a의 demo 키"가 따로 존재하는 것이 아니라,
-"demo 키에 대한 team-a 소속 요청자의 권한"을 묻는 것이다.
+**네임스페이스 스코프 (C+B 키 소유 모델, ADR-009)**: 판단 네임스페이스는 요청자가 아니라 **키 이름**이 정한다.
+`team-a.payment`는 `team-a` 소유라 `team-a`의 Role/RoleBinding만 효력이 있고(다른 네임스페이스 SA도 소유 팀이
+RoleBinding에 넣으면 사용 가능), 점이 없는 전역 키는 SAR을 namespace 없이 보내 ClusterRole/ClusterRoleBinding만 효력이 있다.
 
 **캐싱**: (주체, 네임스페이스, 키, verb) 단위로 짧은 TTL(기본 10초) 캐싱.
 허용·거부 모두 캐싱한다. TTL이 짧아야 권한 회수 반영 지연이 제한된다.

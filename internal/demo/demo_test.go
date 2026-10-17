@@ -153,3 +153,83 @@ func TestParseKeys(t *testing.T) {
 		t.Fatal("invalid key name accepted")
 	}
 }
+
+func TestDatakeyRelay_AllowListOriginAndErrors(t *testing.T) {
+	status, paths := 200, []string{}
+	var gotBody string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		b := make([]byte, 100)
+		n, _ := r.Body.Read(b)
+		gotBody = string(b[:n])
+		if status != 200 {
+			w.WriteHeader(status)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{"ciphertext": "kms:v1:dk-fixture", "plaintext": base64.StdEncoding.EncodeToString(make([]byte, 32)), "key_version": 1})
+	}))
+	defer backend.Close()
+	h := Handler(bench.NewClient(backend.URL, "test-fixture", backend.Client()), testOrigin, Config{Keys: []string{"demo"}, SALabel: "kms-demo/app-a"})
+
+	w := post(h, "/datakey", `{"key":"demo"}`, testOrigin)
+	var resp map[string]string
+	json.NewDecoder(w.Body).Decode(&resp)
+	if w.Code != 200 || resp["ciphertext"] != "kms:v1:dk-fixture" || len(resp["plaintext"]) != 44 || paths[0] != "/v1/datakey/demo" {
+		t.Fatalf("datakey = %d %v %v", w.Code, resp, paths)
+	}
+	if !strings.Contains(gotBody, `"bits":256`) {
+		t.Fatalf("upstream body = %s", gotBody)
+	}
+	if w := post(h, "/datakey", `{"key":"other"}`, testOrigin); w.Code != 400 || len(paths) != 1 {
+		t.Fatal("key outside DEMO_KEYS reached the KMS")
+	}
+	if w := post(h, "/datakey", `{"key":"demo"}`, "https://evil.test"); w.Code != 403 {
+		t.Fatal("origin bypass")
+	}
+	if w := post(h, "/datakey", `{"key":"demo","file":"x"}`, testOrigin); w.Code != 400 {
+		t.Fatal("unknown fields accepted")
+	}
+	for upstream, want := range map[int]int{403: 403, 404: 404, 409: 409, 401: 401, 500: 503, 429: 503} {
+		status = upstream
+		if w := post(h, "/datakey", `{"key":"demo"}`, testOrigin); w.Code != want || strings.Contains(w.Body.String(), "dk-fixture") {
+			t.Fatalf("upstream %d -> %d", upstream, w.Code)
+		}
+	}
+}
+
+// 파일은 서버로 오지 않는다: 업로드용 경로가 없고, 화면 코드는 파일 본문을 fetch로 보내지 않는다. 상단의 상시 권한 문구도 없다.
+func TestPortalFileTabIsClientSideOnly(t *testing.T) {
+	for _, path := range []string{"/upload", "/file", "/encrypt-file"} {
+		status, paths := 200, []string{}
+		h := newDemo(t, &status, &paths)
+		if w := post(h, path, "x", testOrigin); w.Code != 404 && w.Code != 405 {
+			t.Fatalf("%s = %d; the portal must not accept file uploads", path, w.Code)
+		}
+	}
+	js, _ := uiFS.ReadFile("ui/portal.js")
+	html, _ := uiFS.ReadFile("ui/index.html")
+	if strings.Contains(string(js), "body: f") || strings.Contains(string(js), "FormData") {
+		t.Fatal("portal.js seems to upload the file")
+	}
+	for _, s := range []string{"권한으로 동작해요"} {
+		if strings.Contains(string(js), s) || strings.Contains(string(html), s) {
+			t.Fatalf("persistent header text %q must be removed", s)
+		}
+	}
+	if !strings.Contains(string(js), "(현재 ' + saName + ' 권한)") {
+		t.Fatal("403 message should carry the current service account")
+	}
+	if strings.Contains(string(html), `id="sa"`) {
+		t.Fatal("the persistent service-account banner element must be removed")
+	}
+	for _, p := range []string{"/", "/kmsfile.js", "/portal.js"} {
+		status, paths := 200, []string{}
+		h := newDemo(t, &status, &paths)
+		r := httptest.NewRequest("GET", testOrigin+p, nil)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != 200 {
+			t.Fatalf("GET %s = %d", p, w.Code)
+		}
+	}
+}

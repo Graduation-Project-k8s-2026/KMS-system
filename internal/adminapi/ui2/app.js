@@ -31,6 +31,23 @@
     if (sub) view.appendChild(h('p', { class: 'page-sub', text: sub }));
   };
 
+  // ---- 키 상태 배지 (active / disabled / pending_deletion) ----
+  K.keyState = function (m) { return (m && m.state) || 'active'; };
+  K.stateBadge = function (m) {
+    var st = K.keyState(m);
+    if (st === 'disabled') return h('span', { class: 'pill pill-muted', text: '사용 중지' });
+    if (st === 'pending_deletion') {
+      var d = K.validDate(m.deletion_date);
+      return h('span', { class: 'pill pill-bad', text: '삭제 예정' + (d ? ' ' + d.toLocaleDateString('ko-KR') : '') });
+    }
+    return h('span', { class: 'pill pill-ok', text: '사용 중' });
+  };
+  // 보호 키 목록(/api/info의 protected_keys). 화면은 버튼을 미리 막을 뿐이고 최종 판단은 KMS(409 key_protected)다.
+  K.protectedKeys = async function () {
+    var r = await K.api('GET', '/api/info');
+    return r.ok && r.data && Array.isArray(r.data.protected_keys) ? r.data.protected_keys : [];
+  };
+
   // ---- 서식 ----
   K.validDate = function (s) { var d = new Date(s); return s && !isNaN(d) && d.getFullYear() >= 2000 ? d : null; };
   K.fmtDate = function (s) {
@@ -123,9 +140,9 @@
   };
 
   // ---- 오류 문구: 상태 코드별 한국어 설명 + (원래 코드·서버 메시지는 작게) ----
-  var STATUS_KO = { 401: '로그인이 필요해요', 403: '권한이 없어요', 404: '경로를 찾을 수 없어요', 409: '이미 존재해요', 413: '요청이 너무 커요',
+  var STATUS_KO = { 401: '로그인이 필요해요', 403: '권한이 없어요', 404: '경로를 찾을 수 없어요', 409: '현재 상태에서는 할 수 없어요', 413: '요청이 너무 커요',
     503: 'KMS가 봉인되었거나 일시적으로 사용할 수 없어요' };
-  function serverMsg(r) { return ((r.data && r.data.error) || r.text || '').toString().trim().slice(0, 200); }
+  function serverMsg(r) { return ((r.data && (r.data.message || r.data.error)) || r.text || '').toString().trim().slice(0, 200); }
   var errText = K.errText = function (r) {
     if (!r.status) return '서버에 연결하지 못했어요';
     return (STATUS_KO[r.status] || '요청에 실패했어요') + ' (HTTP ' + r.status + (serverMsg(r) ? ' · ' + serverMsg(r) : '') + ')';
@@ -244,7 +261,9 @@
       svg.el('text', { x: L - 6, y: yy + 4, 'text-anchor': 'end' }, (max * f).toFixed(max < 10 ? 1 : 0));
     });
     svg.el('path', { d: points.map(function (p, i) { return (i ? 'L' : 'M') + x(p[0]).toFixed(1) + ' ' + y(p[1]).toFixed(1); }).join(' '), fill: 'none', stroke: '#1d4ed8', 'stroke-width': 2.5 });
-    var tl = function (t) { return new Date(t * 1000).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }); };
+    var long = (t1 - t0) > 12 * 3600; // 긴 범위는 날짜도 함께 표시
+    var tl = function (t) { return long ? new Date(t * 1000).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+      : new Date(t * 1000).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }); };
     svg.el('text', { x: L, y: H - 6 }, tl(t0)); svg.el('text', { x: W - R, y: H - 6, 'text-anchor': 'end' }, tl(t1));
     return svg;
   };

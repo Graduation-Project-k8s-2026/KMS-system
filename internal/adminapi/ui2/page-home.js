@@ -77,7 +77,13 @@
     K.pageHead(view, '대시보드', 'KMS의 현재 상태와 트래픽, 최근 성능 시험 결과 · 10초마다 자동 갱신');
     var cards = h('div', { class: 'cards' });
     var chartBody = h('div', { class: 'note', text: '불러오는 중…' });
-    var chartBox = h('div', { class: 'panel' }, [h('h2', { text: '트래픽 (최근 15분, 초당 요청)' }), chartBody,
+    // 시간 범위: 서버는 15m/1h/6h/24h만 받는다 (상한 24시간). 선택값은 이 브라우저에만 기억한다.
+    var WINDOWS = [['15m', '15분'], ['1h', '1시간'], ['6h', '6시간'], ['24h', '24시간']], win = '15m';
+    try { var saved = localStorage.getItem('kms-dash-window'); if (WINDOWS.some(function (w) { return w[0] === saved; })) win = saved; } catch (e) { /* 저장소 사용 불가 */ }
+    var winSel = h('select', { 'aria-label': '시간 범위' }, WINDOWS.map(function (w) { return h('option', { value: w[0], text: '최근 ' + w[1] }); }));
+    winSel.value = win;
+    var chartTitle = h('h2', { text: '트래픽' });
+    var chartBox = h('div', { class: 'panel' }, [h('div', { class: 'row' }, [chartTitle, winSel]), chartBody,
       h('div', { class: 'hint-small', text: 'Prometheus 수집 주기 때문에 10~30초 지연될 수 있어요.' })]);
     var benchBody = h('div', { class: 'note', text: '불러오는 중…' });
     var benchBox = h('div', { class: 'panel' }, [h('h2', { text: '최근 성능 시험' }), benchBody]);
@@ -85,7 +91,8 @@
 
     async function refresh() {
       var res = await Promise.all([K.loadSeal(), K.api('GET', '/v1/keys'), K.api('GET', '/api/dashboard/metrics?metric=requests'),
-        K.api('GET', '/api/dashboard/metrics?metric=requests&range=1'), K.api('GET', '/api/jobs')]);
+        K.api('GET', '/api/dashboard/metrics?metric=requests&range=1&window=' + win), K.api('GET', '/api/jobs')]);
+      chartTitle.textContent = '트래픽 (최근 ' + WINDOWS.filter(function (w) { return w[0] === win; })[0][1] + ', 초당 요청)';
       var seal = K.seal, sv = K.sealView(seal), keysRes = res[1], reqNow = res[2], reqRange = res[3], jobs = res[4];
       clear(cards);
       var sealCard = K.card('봉인 상태', sv.label, sv.sub, seal && !seal.sealed ? 'ok' : 'warn');
@@ -115,6 +122,11 @@
         benchBody.appendChild(K.tableWrap(h('table', {}, [K.th(['시험', '실행 ID', '상태', '시작']), body])));
       }
     }
+    winSel.addEventListener('change', function () {
+      win = winSel.value;
+      try { localStorage.setItem('kms-dash-window', win); } catch (e) { /* 무시 */ }
+      refresh();
+    });
     await refresh();
     K.addTimer(function () { if (!document.hidden) refresh(); }, 10000);
     K.onVisible = refresh;

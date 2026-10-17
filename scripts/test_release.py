@@ -4,11 +4,11 @@ ROOT=pathlib.Path(__file__).resolve().parents[1]
 def module(name):
  s=importlib.util.spec_from_file_location(name,ROOT/'scripts'/f'{name}.py');m=importlib.util.module_from_spec(s);s.loader.exec_module(m);return m
 fixture=module('create-bench-fixture')
-renderer=module('render-release');etcd=module('verify-etcd-encryption');rewrite=module('rewrite-secrets')
+migrate=module('migrate-rbac-cb');renderer=module('render-release');etcd=module('verify-etcd-encryption');rewrite=module('rewrite-secrets')
 class Contracts(unittest.TestCase):
  def values(self):
   v={k:'fixture' for k in renderer.REQUIRED}
-  v.update(NODE_NAME='test-node',NODE_IP='10.0.0.2',GUI_FQDN='kms.example.test',DEMO_FQDN='demo.example.test',SA_ISSUER='https://kubernetes.default.svc.cluster.local',SOURCE_SHA='b'*40,SERVER_VERSION='v1.35.9',TPM_GROUP_GID='995')
+  v.update(NODE_NAME='test-node',NODE_IP='10.0.0.2',GUI_FQDN='kms.example.test',DEMO_FQDN='demo.example.test',SA_ISSUER='https://kubernetes.default.svc.cluster.local',SOURCE_SHA='b'*40,SERVER_VERSION='v1.35.9')
   for k in v:
    if k.endswith('_IMAGE'):v[k]='example/image@sha256:'+'a'*64
   return v
@@ -24,12 +24,16 @@ class Contracts(unittest.TestCase):
   self.assertEqual(env['KMS_AUTHN'],'on');self.assertEqual(env['KMS_AUTHZ'],'on')
   self.assertEqual(env['KMS_AUTO_UNSEAL'],'false');self.assertEqual(env['KMS_AUTHZ_FAIL_OPEN'],'false')
   self.assertTrue(env['KMS_TRANSIT_TLS_CERT']);self.assertTrue(env['KMS_TRANSIT_TLS_KEY'])
-  self.assertEqual(env['KMS_SEAL_ALLOWED'],'shamir,tpm');self.assertNotIn('KMS_SEAL_TYPE',env)
-  self.assertEqual(env['KMS_TPM_DEVICE'],'/dev/tpmrm0');self.assertNotIn('KMS_TPM_PCRS',env)
-  self.assertEqual(static['spec']['securityContext']['supplementalGroups'],[995])
-  tpm=next(v for v in static['spec']['volumes'] if v['name']=='tpm')
-  self.assertEqual(tpm['hostPath'],{'path':'/dev/tpmrm0'})
-  self.assertIn({'name':'tpm','mountPath':'/dev/tpmrm0'},static['spec']['containers'][0]['volumeMounts'])
+  self.assertEqual(env['KMS_SEAL_ALLOWED'],'shamir');self.assertNotIn('KMS_SEAL_TYPE',env)
+  self.assertEqual(env['KMS_TRANSIT_AUDIT_DIR'],'/transit-audit')
+  self.assertEqual(env['KMS_EXTERNAL_ADDR'],'0.0.0.0:9443');self.assertEqual(env['KMS_EXTERNAL_SUBJECT_NAMESPACES'],'kms-external')
+  self.assertEqual((env['KMS_EXTERNAL_RPS'],env['KMS_EXTERNAL_BURST'],env['KMS_EXTERNAL_AUTHFAIL_MAX']),('20','40','10'))
+  # TPM 배포는 보류(ADR-010): 장치 env, tpm 볼륨/마운트, supplementalGroups가 없어야 한다.
+  self.assertNotIn('KMS_TPM_DEVICE',env);self.assertNotIn('KMS_TPM_PCRS',env)
+  self.assertNotIn('tpm',[v['name'] for v in static['spec']['volumes']])
+  self.assertNotIn('tpm',[m['name'] for m in static['spec']['containers'][0]['volumeMounts']])
+  self.assertNotIn('supplementalGroups',static['spec'].get('securityContext',{}))
+  self.assertNotIn('tpmrm',renderer.yaml.safe_dump(static))
   services=[x for x in docs if x.get('kind')=='Service' and x['spec'].get('type')=='NodePort']
   self.assertEqual([x['metadata']['name'] for x in services],['kms-demo-app'])
   self.assertEqual(services[0]['spec']['ports'][0]['nodePort'],30443)
@@ -37,13 +41,8 @@ class Contracts(unittest.TestCase):
   for doc in docs:
    for rule in doc.get('rules',[]):
     for field in ['verbs','resources','apiGroups']:self.assertNotIn('*',rule.get(field,[]))
- def test_render_cli_rejects_non_numeric_tpm_gid(self):
-  with tempfile.TemporaryDirectory() as d:
-   for gid,code in (('995',0),('tss',2),('0',2),('995;x',2)):
-    vals=self.values();vals['TPM_GROUP_GID']=gid
-    f=pathlib.Path(d)/'v.json';f.write_text(json.dumps(vals));out=pathlib.Path(d)/('out-'+str(abs(hash(gid))))
-    r=subprocess.run(['python3',str(ROOT/'scripts/render-release.py'),'--values',str(f),'--templates',str(ROOT/'deploy/oci-single-node/templates'),'--output',str(out)],capture_output=True)
-    self.assertEqual(r.returncode,code,(gid,r.stderr))
+ def test_render_cli_ignores_no_tpm_input(self):
+  self.assertNotIn('TPM_GROUP_GID',renderer.REQUIRED)
  def test_render_rejects_duplicate_unresolved_and_unpinned(self):
   for raw in ['kind: Pod\nkind: Job\n','image: latest\n','image: ${MISSING}\n','image: IMAGE_TAG\n','spec: {containers: [{name: app}]}','spec: {initContainers: [{name: init}]}','spec: {containers: []}','kind: Pod\nspec: {}']:
    with self.assertRaises(ValueError):renderer.render(raw,self.values())
@@ -121,4 +120,78 @@ class Contracts(unittest.TestCase):
     rewrite.main();replace.assert_called_once();self.assertEqual(replace.call_args.args[0]['metadata']['namespace'],'ns-b')
    self.assertEqual(json.loads(checkpoint.read_text()),['ns-a/sample','ns-b/sample'])
    self.assertNotIn('sensitive-fixture',checkpoint.read_text()+output.getvalue())
+
+def _rb(kind,ns,name,role_kind,role,subjects):
+ md={'name':name};
+ if ns:md['namespace']=ns
+ return {'kind':kind,'metadata':md,'roleRef':{'kind':role_kind,'name':role},'subjects':subjects}
+def _role(kind,ns,name,rules):
+ md={'name':name}
+ if ns:md['namespace']=ns
+ return {'kind':kind,'metadata':md,'rules':rules}
+def _rule(names,verbs):
+ r={'apiGroups':['kms.local'],'resources':['keys'],'verbs':verbs}
+ if names:r['resourceNames']=names
+ return r
+SA=lambda ns,n:{'kind':'ServiceAccount','name':n,'namespace':ns}
+class MigrateRbac(unittest.TestCase):
+ def items(self):
+  return [
+   _role('Role','shop','pay',[_rule(['Payment_Key'],['encrypt','decrypt'])]),
+   _rb('RoleBinding','shop','pay','Role','pay',[SA('shop','api'),SA('batch','worker')]),
+   _role('Role','shop','pay2',[_rule(['Payment_Key'],['rewrap'])]),
+   _rb('RoleBinding','shop','pay2','Role','pay2',[SA('shop','api')]),
+   _role('Role','team-a','own',[_rule(['team-a.ledger'],['encrypt'])]),
+   _rb('RoleBinding','team-a','own','Role','own',[SA('team-a','app')]),
+   _role('Role','wide','all',[_rule([],['encrypt'])]),
+   _rb('RoleBinding','wide','all','Role','all',[SA('wide','app')]),
+   _role('ClusterRole',None,'done',[_rule(['already'],['encrypt'])]),
+   _rb('ClusterRoleBinding',None,'done','ClusterRole','done',[SA('shop','c')]),
+   _role('Role','shop','c',[_rule(['already'],['encrypt'])]),
+   _rb('RoleBinding','shop','c','Role','c',[SA('shop','c')]),
+   _role('Role','shop','other',[{'apiGroups':[''],'resources':['secrets'],'verbs':['get']}]),
+   _rb('RoleBinding','shop','other','Role','other',[SA('shop','x')]),
+  ]
+ def test_check_reports_lost_kept_warnings(self):
+  grants,warnings,cg=migrate.analyze(self.items())
+  table=migrate.render_table(grants,warnings,cg)
+  self.assertIn('사라짐',table);self.assertIn('유지',table);self.assertIn('이전됨',table)
+  self.assertTrue(any('resourceNames 없음' in w for w in warnings))
+  status={g['key']:migrate.classify(g)[0] for g in grants}
+  self.assertEqual(status['team-a.ledger'],'kept');self.assertEqual(status['Payment_Key'],'lost')
+  self.assertNotIn('secrets',table)
+ def test_generate_makes_equivalent_clusterroles_and_skips_covered(self):
+  grants,_,cg=migrate.analyze(self.items())
+  docs,skipped=migrate.build_manifests(grants,cg)
+  roles={d['metadata']['name']:d for d in docs if d['kind']=='ClusterRole'}
+  binds={d['metadata']['name']:d for d in docs if d['kind']=='ClusterRoleBinding'}
+  self.assertEqual(set(roles),set(binds));self.assertEqual(len(roles),2)  # decrypt+encrypt / rewrap 두 묶음
+  for name,role in roles.items():
+   self.assertEqual(role['rules'][0]['resourceNames'],['Payment_Key']);self.assertEqual(role['rules'][0]['apiGroups'],['kms.local'])
+   self.assertRegex(name,r'^[a-z0-9]([-a-z0-9]*[a-z0-9])?$');self.assertTrue(name.startswith('kms-cb-payment-key-'))
+   self.assertEqual(binds[name]['roleRef'],{'apiGroup':'rbac.authorization.k8s.io','kind':'ClusterRole','name':name})
+  by_verbs={tuple(r['rules'][0]['verbs']):n for n,r in roles.items()}
+  self.assertEqual({(s['namespace'],s['name']) for s in binds[by_verbs[('decrypt','encrypt')]]['subjects']},{('shop','api'),('batch','worker')})
+  self.assertEqual([s['name'] for s in binds[by_verbs[('rewrap',)]]['subjects']],['api'])
+  self.assertEqual(len(skipped),1)  # 'already' 는 이미 ClusterRoleBinding 으로 있음
+  self.assertNotIn('team-a.ledger',json.dumps(docs))
+ def test_cli_generate_writes_file_without_overwrite_and_leaves_roles(self):
+  with tempfile.TemporaryDirectory() as d:
+   inp=pathlib.Path(d)/'in.json';inp.write_text(json.dumps({'kind':'List','items':self.items()}))
+   out=pathlib.Path(d)/'cb.yaml'
+   with contextlib.redirect_stdout(io.StringIO()):
+    self.assertEqual(migrate.main(['generate','--input',str(inp),'--output',str(out)]),0)
+    docs=list(renderer.yaml.safe_load_all(out.read_text()))
+    self.assertTrue(all(x['kind'] in ('ClusterRole','ClusterRoleBinding') for x in docs if x))
+    self.assertEqual(migrate.main(['generate','--input',str(inp),'--output',str(out)]),2)  # 덮어쓰기 거부
+    self.assertEqual(migrate.main(['check','--input',str(inp)]),0)
+ def test_repo_templates_use_cluster_scope_for_global_keys(self):
+  docs=[]
+  for f in (ROOT/'deploy/oci-single-node/templates').glob('serviceaccounts-rbac.yaml'):
+   docs+=list(renderer.yaml.load_all(renderer.render(f.read_text(),Contracts.values(Contracts())),Loader=renderer.UniqueLoader))
+  kms=[x for x in docs if x and x.get('kind') in ('Role','ClusterRole') and any('kms.local' in r.get('apiGroups',[]) for r in x.get('rules',[]))]
+  self.assertTrue(kms);self.assertTrue(all(x['kind']=='ClusterRole' for x in kms))
+  bind=next(x for x in docs if x and x.get('kind')=='ClusterRoleBinding' and x['metadata']['name']==kms[0]['metadata']['name'])
+  self.assertEqual({(s['namespace'],s['name']) for s in bind['subjects']},{('kms-demo','app-a'),('kms-bench','bench-transit')})
+
 if __name__=='__main__':unittest.main()

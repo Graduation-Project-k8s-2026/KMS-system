@@ -88,7 +88,7 @@ func serve() error {
 		return fmt.Errorf("ingest must bind private node IP on 8202")
 	}
 	socket := getenvDefault("KMS_ADMIN_SOCKET", "/run/custom-kms/admin/admin.sock")
-	router := auth.Wrap(adminapi.NewRouter(adminapi.Deps{SocketPath: socket, Jobs: service, AuditDir: filepath.Join(os.Getenv("ADMIN_API_DATA_DIR"), "audit"), CoreAuditDir: os.Getenv("ADMIN_API_CORE_AUDIT_DIR"), PrometheusURL: os.Getenv("ADMIN_API_PROMETHEUS_URL"), DefaultUI: os.Getenv("ADMIN_API_UI_DEFAULT"), RolesFile: os.Getenv("ADMIN_API_ROLES_FILE"), Info: adminapi.Info{ServerVersion: os.Getenv("ADMIN_API_SERVER_VERSION"), SourceSHA: os.Getenv("ADMIN_API_SOURCE_SHA"), BenchImage: os.Getenv("ADMIN_API_BENCH_IMAGE"), AdminImage: os.Getenv("ADMIN_API_IMAGE")}}))
+	router := auth.Wrap(adminapi.NewRouter(adminapi.Deps{SocketPath: socket, Jobs: service, AuditDir: filepath.Join(os.Getenv("ADMIN_API_DATA_DIR"), "audit"), CoreAuditDir: os.Getenv("ADMIN_API_CORE_AUDIT_DIR"), TransitAuditDir: os.Getenv("ADMIN_API_TRANSIT_AUDIT_DIR"), PrometheusURL: os.Getenv("ADMIN_API_PROMETHEUS_URL"), DefaultUI: os.Getenv("ADMIN_API_UI_DEFAULT"), RolesFile: os.Getenv("ADMIN_API_ROLES_FILE"), Info: adminapi.Info{ServerVersion: os.Getenv("ADMIN_API_SERVER_VERSION"), SourceSHA: os.Getenv("ADMIN_API_SOURCE_SHA"), BenchImage: os.Getenv("ADMIN_API_BENCH_IMAGE"), AdminImage: os.Getenv("ADMIN_API_IMAGE"), ProtectedKeys: protectedKeys()}}))
 	// Subjects come from the trusted loopback Serve boundary; bodies/headers are never logged.
 	router = auditLog.Middleware(auth.Subject, router)
 	srv := security.Server(addr, router)
@@ -154,4 +154,19 @@ func getenvDefault(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// protectedKeys: 화면에 알려 줄 보호 키 목록. ADMIN_API_PROTECTED_KEYS(쉼표 목록)가 없으면 KMS v2 기본 키 이름 하나.
+func protectedKeys() []string {
+	v, ok := os.LookupEnv("ADMIN_API_PROTECTED_KEYS")
+	if !ok {
+		v = "k8s-secrets"
+	}
+	var out []string
+	for _, k := range strings.Split(v, ",") {
+		if k = strings.TrimSpace(k); k != "" {
+			out = append(out, k)
+		}
+	}
+	return out
 }

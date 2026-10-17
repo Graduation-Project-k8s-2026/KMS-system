@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -22,8 +23,11 @@ type Event struct {
 	RequestID string    `json:"request_id"`
 	Subject   string    `json:"subject"`
 	Action    string    `json:"action"`
-	Allowed   bool      `json:"allowed"`
-	Success   bool      `json:"success"`
+	// Key: 작업 대상 키 이름 (/v1/keys/{name}/... 경로 또는 핸들러가 SetKey로 알린 값). 없으면 생략 —
+	// 기존 기록 형식에 선택 필드를 더했을 뿐이라 이전 파일도 그대로 읽힌다.
+	Key     string `json:"key,omitempty"`
+	Allowed bool   `json:"allowed"`
+	Success bool   `json:"success"`
 }
 type Log struct {
 	Dir string
@@ -106,7 +110,7 @@ func (l *Log) Middleware(subject func(*http.Request) string, next http.Handler) 
 			next.ServeHTTP(w, r)
 			return
 		}
-		principal := &principalValue{Name: subject(r)}
+		principal := &principalValue{Name: subject(r), Key: keyFromPath(r.URL.Path)}
 		r = r.WithContext(context.WithValue(r.Context(), principalKey{}, principal))
 		id := make([]byte, 16)
 		if _, err := rand.Read(id); err != nil {
@@ -114,13 +118,13 @@ func (l *Log) Middleware(subject func(*http.Request) string, next http.Handler) 
 			return
 		}
 		requestID := hex.EncodeToString(id)
-		if err := l.Write(Event{RequestID: requestID, Subject: subject(r), Action: action(r) + " requested"}); err != nil {
+		if err := l.Write(Event{RequestID: requestID, Subject: subject(r), Action: action(r) + " requested", Key: principal.Key}); err != nil {
 			http.Error(w, "audit unavailable", 503)
 			return
 		}
 		rec := &buffered{header: make(http.Header), status: 200}
 		next.ServeHTTP(rec, r)
-		if err := l.Write(Event{RequestID: requestID, Subject: principal.Name, Action: action(r) + " completed", Allowed: rec.status != 401 && rec.status != 403, Success: rec.status < 400 && !rec.overflow}); err != nil {
+		if err := l.Write(Event{RequestID: requestID, Subject: principal.Name, Action: action(r) + " completed", Key: principal.Key, Allowed: rec.status != 401 && rec.status != 403, Success: rec.status < 400 && !rec.overflow}); err != nil {
 			w.Header().Set("Cache-Control", "no-store")
 			http.Error(w, "audit completion unavailable; operation may have committed", 503)
 			return
@@ -186,8 +190,13 @@ func ReadToday(dir string) ([]Event, error) {
 	return events, nil
 }
 
+var lifecycleOp = regexp.MustCompile(`^/v1/keys/[^/]+/(disable|enable|schedule-deletion|cancel-deletion)$`)
+
 func action(r *http.Request) string {
 	path := r.URL.Path
+	if m := lifecycleOp.FindStringSubmatch(path); m != nil {
+		return r.Method + " /v1/keys/" + m[1]
+	}
 	for _, p := range []string{"/v1/sys/init", "/v1/sys/unseal", "/v1/sys/seal-migrate", "/v1/sys/seal", "/api/jobs", "/api/bench/results", "/v1/keys", "/api/session", "/api/audit"} {
 		if path == p || strings.HasPrefix(path, p+"/") {
 			return r.Method + " " + p
@@ -197,7 +206,25 @@ func action(r *http.Request) string {
 }
 
 type principalKey struct{}
-type principalValue struct{ Name string }
+type principalValue struct{ Name, Key string }
+
+// keyFromPath: /v1/keys/{name} 또는 /v1/keys/{name}/{op} 에서 키 이름을 꺼낸다.
+func keyFromPath(path string) string {
+	rest, ok := strings.CutPrefix(path, "/v1/keys/")
+	if !ok || rest == "" {
+		return ""
+	}
+	name, _, _ := strings.Cut(rest, "/")
+	return name
+}
+
+// SetKey는 핸들러가 (경로에 이름이 없는) 작업의 대상 키를 감사 기록에 알린다. 예: POST /v1/keys의 생성 대상.
+// 감사 미들웨어 밖(테스트 등)에서는 아무 일도 하지 않는다.
+func SetKey(r *http.Request, name string) {
+	if p, ok := r.Context().Value(principalKey{}).(*principalValue); ok {
+		p.Key = name
+	}
+}
 
 // SetSubject must only be called after authentication of this request.
 func SetSubject(r *http.Request, name string) {

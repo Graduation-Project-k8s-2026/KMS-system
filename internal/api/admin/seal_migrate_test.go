@@ -59,6 +59,8 @@ type proc struct {
 	b   *barrier.Barrier
 	sw  *seal.Switch
 	km  *keys.KeyManager
+
+	shares []string // initAndUnseal이 받은 조각 (재해제 테스트용)
 }
 
 func startProc(t *testing.T, store storage.StorageBackend, dev *sealtest.Device) *proc {
@@ -148,6 +150,7 @@ func (p *proc) initAndUnseal() []string {
 		p.t.Fatalf("init: %d %v", code, out)
 	}
 	shares := toStrings(out["shares"])
+	p.shares = shares
 	p.unsealWith(shares)
 	return shares
 }
@@ -574,5 +577,62 @@ func TestSealMigrate_SharesNeverLogged(t *testing.T) {
 		if strings.Contains(buf.String(), s) {
 			t.Fatal("a share appeared in the log output")
 		}
+	}
+}
+
+func (p *proc) unsealWithSharesAgain(t *testing.T) {
+	t.Helper()
+	p.sw.Shamir().Reset()
+	p.unsealWith(p.shares)
+}
+
+// seal-profile은 관리 소켓에서도 응답하고, 현재 봉인 방식(shamir/tpm)을 따라간다.
+func TestSealProfileOnAdminFollowsMode(t *testing.T) {
+	store, dev := storage.NewMemoryStorage(), sealtest.NewDevice()
+	p := startProc(t, store, dev)
+	p.initAndUnseal()
+	get := func() map[string]any {
+		resp, err := http.Get(p.srv.URL + "/v1/sys/seal-profile")
+		if err != nil || resp.StatusCode != 200 {
+			t.Fatalf("seal-profile: %v %v", resp, err)
+		}
+		var out map[string]any
+		decodeJSON(t, resp, &out)
+		return out
+	}
+	if pr := get(); pr["Type"] != "shamir" || pr["RequiresHumans"] != true || pr["AutoUnsealCapable"] != false {
+		t.Fatalf("shamir profile = %v", pr)
+	}
+	p.post("/v1/sys/seal-migrate", map[string]string{"target": "tpm"})
+	if pr := get(); pr["Type"] != "tpm" || pr["RequiresHumans"] != false || pr["AutoUnsealCapable"] != true {
+		t.Fatalf("tpm profile = %v", pr)
+	}
+}
+
+// KMS_SEAL_ALLOWED=shamir (TPM 열기 함수 없음)인 서버에서 target=tpm은 403으로 거부되고 아무것도 바뀌지 않는다.
+func TestSealMigrate_TPMNotAllowed_Rejected403NothingChanges(t *testing.T) {
+	store := storage.NewMemoryStorage()
+	sw := seal.NewSwitch("shamir", seal.NewShamirSeal(3), nil, nil, store) // main.go: tpm 불허 → open == nil
+	b := barrier.NewBarrier(store, sw)
+	km := keys.NewKeyManager(b)
+	srv := httptest.NewServer(apiadmin.NewRouter(apiadmin.Deps{Barrier: b, Keys: km, Seal: sw, ShamirParts: 5, ShamirThreshold: 3}))
+	t.Cleanup(srv.Close)
+	p := &proc{t: t, srv: srv, b: b, sw: sw, km: km}
+	p.initAndUnseal()
+	before, _ := store.Get(initPathKey)
+
+	code, out := p.post("/v1/sys/seal-migrate", map[string]string{"target": "tpm"})
+	if code != 403 || out["error"] != "seal_not_allowed" {
+		t.Fatalf("got %d %v, want 403 seal_not_allowed", code, out)
+	}
+	if _, leaked := out["shares"]; leaked {
+		t.Fatal("shares returned")
+	}
+	after, _ := store.Get(initPathKey)
+	if string(before) != string(after) || hasBlob(t, store) || sw.Mode() != "shamir" {
+		t.Fatal("state changed by a rejected migration")
+	}
+	if code, _ := p.post("/v1/sys/seal-migrate", map[string]string{"target": "shamir"}); code != 200 {
+		t.Fatalf("shamir reissue should still work: %d", code)
 	}
 }

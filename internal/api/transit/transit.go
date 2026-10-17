@@ -4,13 +4,16 @@ package transit
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/api/httputil"
+	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/audit"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/authn"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/authz"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/barrier"
@@ -45,6 +48,10 @@ type Deps struct {
 	// 권한을 가질 필요가 없게 하는 것)를 인가 요구로 다시 무색하게 만들지
 	// 않기 위함이다.
 	Authorizer *authz.Authorizer
+
+	// Audit: 설정돼 있으면(KMS_TRANSIT_AUDIT_DIR) encrypt/decrypt/rewrap 요청을 비동기로 감사
+	// 기록한다. nil이면 기록하지 않는다.
+	Audit *audit.TransitLog
 }
 
 // NewRouter는 Deps를 엮어 chi 라우터를 구성해 반환한다. 관리 라우트(키
@@ -55,7 +62,8 @@ func NewRouter(deps Deps) http.Handler {
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if deps.ReservedKey != "" && strings.HasSuffix(r.URL.Path, "/"+deps.ReservedKey) {
-				http.Error(w, "reserved key", 403)
+				// 존재하지 않는 키·권한 없는 키와 같은 403 (예약 키의 존재를 구분해 알려주지 않는다).
+				httputil.WriteJSONError(w, http.StatusForbidden, "request is not permitted")
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -86,9 +94,10 @@ func NewRouter(deps Deps) http.Handler {
 	r.Group(func(r chi.Router) {
 		r.Use(httputil.SealedGuard(deps.Barrier))
 
-		r.With(metrics.InstrumentTransit("encrypt"), authzMiddleware(deps.Authorizer, "encrypt")).Post("/v1/encrypt/{name}", handleEncrypt(deps))
-		r.With(metrics.InstrumentTransit("decrypt"), authzMiddleware(deps.Authorizer, "decrypt")).Post("/v1/decrypt/{name}", handleDecrypt(deps))
-		r.With(metrics.InstrumentTransit("rewrap"), authzMiddleware(deps.Authorizer, "rewrap")).Post("/v1/rewrap/{name}", handleRewrap(deps))
+		r.With(metrics.InstrumentTransit("encrypt"), auditMiddleware(deps.Audit, "encrypt"), authzMiddleware(deps.Authorizer, "encrypt")).Post("/v1/encrypt/{name}", handleEncrypt(deps))
+		r.With(metrics.InstrumentTransit("decrypt"), auditMiddleware(deps.Audit, "decrypt"), authzMiddleware(deps.Authorizer, "decrypt")).Post("/v1/decrypt/{name}", handleDecrypt(deps))
+		r.With(metrics.InstrumentTransit("rewrap"), auditMiddleware(deps.Audit, "rewrap"), authzMiddleware(deps.Authorizer, "rewrap")).Post("/v1/rewrap/{name}", handleRewrap(deps))
+		r.With(metrics.InstrumentTransit("datakey"), auditMiddleware(deps.Audit, "datakey"), authzMiddleware(deps.Authorizer, "datakey")).Post("/v1/datakey/{name}", handleDataKey(deps))
 	})
 
 	return r
@@ -152,6 +161,21 @@ func handleSealProfile(deps Deps) http.HandlerFunc {
 // Init/Unseal 시간을 측정한 결과(seal.RunBenchmark)를 반환한다. 지금 서버가
 // 실제로 어떤 seal로 조립됐는지와 무관하게 항상 4개 전부를 측정한다 —
 // RunBenchmark 자체의 설계 이유는 internal/seal/benchmark.go 참고.
+func badRequest(w http.ResponseWriter, message, hint string) {
+	httputil.WriteAPIError(w, http.StatusBadRequest, "bad_request", message, hint)
+}
+
+// fail은 Transit 오류를 응답으로 바꾼다. 상세 원인(키 이름·버전 숫자 포함)은 응답에 넣지 않고 감사 기록에만
+// 남긴다 (정보 노출 줄이기). 도메인 에러가 아닌 400 계열(암호문 형식 오류·인증 실패)은 invalid_ciphertext로 응답한다.
+func fail(w http.ResponseWriter, r *http.Request, err error, fallback int) {
+	AnnotateAudit(r, err.Error())
+	if !httputil.IsDomainError(err) && fallback == http.StatusBadRequest {
+		httputil.WriteAPIError(w, http.StatusBadRequest, "invalid_ciphertext", "the ciphertext is malformed or failed authentication", "")
+		return
+	}
+	httputil.WriteError(w, err, fallback)
+}
+
 // ---- /v1/encrypt, /v1/decrypt, /v1/rewrap ----
 
 func handleEncrypt(deps Deps) http.HandlerFunc {
@@ -160,19 +184,19 @@ func handleEncrypt(deps Deps) http.HandlerFunc {
 
 		var req encryptRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			httputil.WriteJSONError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+			badRequest(w, "invalid request body", "")
 			return
 		}
 
 		plaintext, err := base64.StdEncoding.DecodeString(req.Plaintext)
 		if err != nil {
-			httputil.WriteJSONError(w, http.StatusBadRequest, "plaintext must be base64-encoded: "+err.Error())
+			badRequest(w, "plaintext must be base64-encoded", "")
 			return
 		}
 
 		ciphertext, err := deps.Transit.Encrypt(name, plaintext)
 		if err != nil {
-			httputil.WriteError(w, err, http.StatusInternalServerError)
+			fail(w, r, err, http.StatusInternalServerError)
 			return
 		}
 		metrics.TransitPayloadBytes.WithLabelValues("encrypt").Observe(float64(len(plaintext)))
@@ -186,7 +210,7 @@ func handleDecrypt(deps Deps) http.HandlerFunc {
 
 		var req decryptRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			httputil.WriteJSONError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+			badRequest(w, "invalid request body", "")
 			return
 		}
 
@@ -196,7 +220,7 @@ func handleDecrypt(deps Deps) http.HandlerFunc {
 			// KeyPolicyError/ErrSealed로 분류되지 않은 나머지 — 대부분 ciphertext
 			// 형식 오류이거나 GCM 인증 실패이며, 둘 다 서버 문제가 아니라
 			// 클라이언트가 보낸 입력(ciphertext) 자체의 문제다.
-			httputil.WriteError(w, err, http.StatusBadRequest)
+			fail(w, r, err, http.StatusBadRequest)
 			return
 		}
 		metrics.TransitPayloadBytes.WithLabelValues("decrypt").Observe(float64(len(plaintext)))
@@ -210,7 +234,7 @@ func handleRewrap(deps Deps) http.HandlerFunc {
 
 		var req rewrapRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			httputil.WriteJSONError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+			badRequest(w, "invalid request body", "")
 			return
 		}
 
@@ -219,10 +243,61 @@ func handleRewrap(deps Deps) http.HandlerFunc {
 			// Decrypt와 동일한 이유로 fallback을 400으로 준다 — Rewrap 내부의
 			// 첫 단계가 Decrypt이므로, 여기서 나오는 미분류 에러 역시 대부분
 			// ciphertext 형식 오류이거나 인증 실패다.
-			httputil.WriteError(w, err, http.StatusBadRequest)
+			fail(w, r, err, http.StatusBadRequest)
 			return
 		}
 		metrics.TransitPayloadBytes.WithLabelValues("rewrap").Observe(float64(len(newCiphertext)))
 		httputil.WriteJSON(w, http.StatusOK, rewrapResponse{Ciphertext: newCiphertext})
+	}
+}
+
+// ---- /v1/datakey ----
+
+type dataKeyRequest struct {
+	Bits      int   `json:"bits"`      // 128 | 256 (기본 256)
+	Plaintext *bool `json:"plaintext"` // false면 암호문만 (기본 true)
+}
+
+type dataKeyResponse struct {
+	Ciphertext string `json:"ciphertext"`
+	Plaintext  string `json:"plaintext,omitempty"` // base64. plaintext=false면 생략
+	KeyVersion int    `json:"key_version"`
+}
+
+// handleDataKey는 1회용 데이터 키를 만들어 암호문(과 선택적으로 평문)을 돌려준다. 호출자는 평문 키로 자기
+// 데이터를 클라이언트에서 암호화(봉투 암호화)하고 평문 키를 버린 뒤 암호문 키만 저장한다. 나중에 같은
+// 키의 POST /v1/decrypt/{name}(verb decrypt)로 평문 키를 되찾는다. 평문 키는 로그·감사·지표 어디에도
+// 남기지 않는다 (감사 이벤트에는 본문 필드 자체가 없고, 지표에는 길이만 센다).
+func handleDataKey(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		name := chi.URLParam(r, "name")
+
+		var req dataKeyRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			badRequest(w, "invalid request body", "")
+			return
+		}
+		bits := req.Bits
+		if bits == 0 {
+			bits = 256
+		}
+		wantPlain := req.Plaintext == nil || *req.Plaintext
+
+		ciphertext, plain, version, err := deps.Transit.DataKey(name, bits)
+		if err != nil {
+			fail(w, r, err, http.StatusInternalServerError)
+			return
+		}
+		defer func() {
+			for i := range plain {
+				plain[i] = 0
+			}
+		}()
+		resp := dataKeyResponse{Ciphertext: ciphertext, KeyVersion: version}
+		if wantPlain {
+			resp.Plaintext = base64.StdEncoding.EncodeToString(plain)
+		}
+		metrics.TransitPayloadBytes.WithLabelValues("datakey").Observe(float64(len(plain)))
+		httputil.WriteJSON(w, http.StatusOK, resp)
 	}
 }

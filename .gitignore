@@ -55,3 +55,7 @@ __pycache__/
 *.pem
 *.kubeconfig
 kms-sar.conf
+
+# CLI 빌드 결과 (scripts/build-cli.sh)
+dist/
+/kms

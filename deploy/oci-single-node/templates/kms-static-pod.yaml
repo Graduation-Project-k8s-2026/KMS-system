@@ -74,6 +74,22 @@ spec:
     # 비우면 꺼진다. 호스트 디렉터리는 미리 만들어 둬야 한다: install -d -o 10001 -g 10001 -m 0700 /var/lib/custom-kms/transit-audit
     - name: KMS_TRANSIT_AUDIT_DIR
       value: /transit-audit
+    # 외부(인터넷 공개) 리스너 — 비우면 꺼진다. 이 Pod는 hostNetwork라 위 KMS_TRANSIT_ADDR처럼 노드 주소로 바로 받으므로
+    # 별도 Service/NodePort가 필요 없다 (Service를 만들면 오히려 kube-proxy 규칙 하나가 더 생길 뿐이다).
+    # 0.0.0.0:9443으로 두어도 인터넷에서 닿는 것은 OCI 보안 목록/방화벽을 사람이 열었을 때뿐이다 (docs/release/kms-core-apply.md).
+    # 방어선: 요청자 SA와 키가 모두 아래 네임스페이스 소속이어야 하고, 클라이언트 IP별 요청 수 제한·인증 실패 차단이 걸린다.
+    - name: KMS_EXTERNAL_ADDR
+      value: 0.0.0.0:9443
+    - name: KMS_EXTERNAL_SUBJECT_NAMESPACES
+      value: kms-external
+    - name: KMS_EXTERNAL_KEY_NAMESPACES
+      value: kms-external
+    - name: KMS_EXTERNAL_RPS
+      value: '20'
+    - name: KMS_EXTERNAL_BURST
+      value: '40'
+    - name: KMS_EXTERNAL_AUTHFAIL_MAX
+      value: '10'
     securityContext:
       allowPrivilegeEscalation: false
       readOnlyRootFilesystem: true

@@ -26,6 +26,8 @@ class Contracts(unittest.TestCase):
   self.assertTrue(env['KMS_TRANSIT_TLS_CERT']);self.assertTrue(env['KMS_TRANSIT_TLS_KEY'])
   self.assertEqual(env['KMS_SEAL_ALLOWED'],'shamir');self.assertNotIn('KMS_SEAL_TYPE',env)
   self.assertEqual(env['KMS_TRANSIT_AUDIT_DIR'],'/transit-audit')
+  self.assertEqual(env['KMS_EXTERNAL_ADDR'],'0.0.0.0:9443');self.assertEqual(env['KMS_EXTERNAL_SUBJECT_NAMESPACES'],'kms-external')
+  self.assertEqual((env['KMS_EXTERNAL_RPS'],env['KMS_EXTERNAL_BURST'],env['KMS_EXTERNAL_AUTHFAIL_MAX']),('20','40','10'))
   # TPM 배포는 보류(ADR-010): 장치 env, tpm 볼륨/마운트, supplementalGroups가 없어야 한다.
   self.assertNotIn('KMS_TPM_DEVICE',env);self.assertNotIn('KMS_TPM_PCRS',env)
   self.assertNotIn('tpm',[v['name'] for v in static['spec']['volumes']])

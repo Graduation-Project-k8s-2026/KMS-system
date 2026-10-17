@@ -11,7 +11,7 @@ def mapping(loader,node,deep=False):
   result[k]=loader.construct_object(value,deep=deep)
  return result
 UniqueLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,mapping)
-REQUIRED={'NODE_NAME','NODE_IP','GUI_FQDN','DEMO_FQDN','SA_ISSUER','SERVER_IMAGE','ADMIN_IMAGE','BENCH_IMAGE','DEMO_IMAGE','PROMETHEUS_IMAGE','SOURCE_SHA','SERVER_VERSION'}
+REQUIRED={'NODE_NAME','NODE_IP','GUI_FQDN','DEMO_FQDN','SA_ISSUER','SERVER_IMAGE','ADMIN_IMAGE','BENCH_IMAGE','DEMO_IMAGE','PROMETHEUS_IMAGE','SOURCE_SHA','SERVER_VERSION','TPM_GROUP_GID'}
 def render(template,values):
  def replace(m):
   k=m.group(1)
@@ -52,6 +52,7 @@ def main():
  for k in REQUIRED:
   if k.endswith('_IMAGE') and not re.fullmatch(r'[\w./:-]+@sha256:[a-f0-9]{64}',values[k]):raise ValueError('digest required: '+k)
  if not re.fullmatch('[a-f0-9]{40}',values['SOURCE_SHA']):raise ValueError('source SHA required')
+ if not re.fullmatch('[1-9][0-9]{0,9}',values['TPM_GROUP_GID']):raise ValueError('TPM_GROUP_GID must be a positive numeric gid')
  rendered={f.name:render(f.read_text(),values) for f in pathlib.Path(a.templates).glob('*.yaml')}
  if not rendered:raise ValueError('templates absent')
  out=pathlib.Path(a.output)

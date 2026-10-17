@@ -13,6 +13,11 @@ spec:
     runAsUser: 10001
     runAsGroup: 10001
     runAsNonRoot: true
+    # TPM 장치(/dev/tpmrm0)는 호스트에서 root:tss 0660이다(udev 규칙, docs/release/tpm-seal.md).
+    # KMS는 uid/gid 10001이라 tss 그룹이 아니므로 보조 그룹으로 그 gid를 준다.
+    # gid는 호스트마다 다르다: 렌더 입력 TPM_GROUP_GID (호스트에서 `getent group tss`).
+    supplementalGroups:
+    - ${TPM_GROUP_GID}
     seccompProfile:
       type: RuntimeDefault
   containers:
@@ -26,8 +31,15 @@ spec:
       value: file
     - name: KMS_DATA_DIR
       value: /data
-    - name: KMS_SEAL_TYPE
-      value: shamir
+    # 허용하는 봉인 방식. 실제 방식은 저장소의 init 기록이 정한다(KMS_SEAL_TYPE은 폐기).
+    - name: KMS_SEAL_ALLOWED
+      value: shamir,tpm
+    # 서버가 장치를 여는 때는 "기록이 tpm일 때의 기동"과 "seal-migrate 요청" 두 경우뿐이다.
+    # 그래서 Shamir만 쓰는 노드(장치 없음)에서도 이 값이 있어도 기동에 영향이 없다.
+    - name: KMS_TPM_DEVICE
+      value: /dev/tpmrm0
+    # KMS_TPM_PCRS는 일부러 설정하지 않는다(PCR 봉인 꺼짐). 켜면 커널/펌웨어 업데이트 뒤
+    # 자동 해제가 실패해 복구 조각이 필요해진다. 트레이드오프는 docs/decisions.md ADR-010 참고.
     - name: KMS_SHAMIR_PARTS
       value: '5'
     - name: KMS_SHAMIR_THRESHOLD
@@ -98,6 +110,8 @@ spec:
       readOnly: true
     - name: core-audit
       mountPath: /core-audit
+    - name: tpm
+      mountPath: /dev/tpmrm0
   volumes:
   - name: keys
     hostPath:
@@ -127,4 +141,14 @@ spec:
     hostPath:
       path: /var/lib/custom-kms/core-audit
       type: Directory
+  # TPM 장치. 의도적으로 type을 지정하지 않는다(= kubelet이 사전 검사를 하지 않음).
+  # type: CharDevice로 두면 장치가 없는 노드(TPM을 안 쓰는 Shamir 노드), 또는 swtpm이
+  # 늦게 떠서 장치가 아직 없는 재부팅 직후에 이 Pod가 아예 시작되지 못한다. 그러면
+  # KMS가 "봉인 상태로 기동해 복구 조각을 기다린다"는 복구 경로 자체를 잃는다.
+  # 대신 장치가 필요한 시점(기록이 tpm일 때의 기동, seal-migrate)에만 서버가 열고, 못 열면
+  # 원인을 밝히며 봉인을 유지한다. 주의: 일부 런타임은 없는 hostPath를 빈 디렉터리로 만든다
+  # — TPM 노드에서는 kubelet이 swtpm 서비스 뒤에 뜨도록 순서를 강제한다(절차서 참고).
+  - name: tpm
+    hostPath:
+      path: /dev/tpmrm0
   automountServiceAccountToken: false

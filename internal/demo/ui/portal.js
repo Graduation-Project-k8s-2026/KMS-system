@@ -12,10 +12,16 @@
   var value = $('value'), keySel = $('key'), result = $('result');
 
   // ---- KMS 응답 → 한국어 (원래 코드는 작게 같이 표시) ----
-  var STATUS_KO = { 400: '입력이 올바르지 않거나 허용된 키가 아니에요', 401: '서비스 계정 인증에 실패했어요', 403: '이 서비스 계정에는 이 키를 쓸 권한이 없어요',
-    404: 'KMS에 이 키가 없어요', 413: '입력이 너무 커요', 503: 'KMS가 봉인 중이거나 일시적으로 사용할 수 없어요' };
+  // 포털이 쓰는 서비스 계정(예: kms-demo/app-a → app-a). 상단에 상시 표시하지 않고 403 안내 안에만 넣는다.
+  var saName = '';
+  var STATUS_KO = { 400: '입력이 올바르지 않거나 허용된 키가 아니에요', 401: '서비스 계정 인증에 실패했어요',
+    404: 'KMS에 이 키가 없어요', 409: '이 키는 사용 중지(또는 삭제 예약) 상태예요', 413: '입력이 너무 커요', 503: 'KMS가 봉인 중이거나 일시적으로 사용할 수 없어요' };
+  function statusText(status) {
+    if (status === 403) return '이 서비스 계정에는 이 키를 쓸 권한이 없어요' + (saName ? ' (현재 ' + saName + ' 권한)' : '');
+    return STATUS_KO[status] || '요청에 실패했어요';
+  }
   function errBox(status) {
-    return h('div', { class: 'err', role: 'alert' }, [STATUS_KO[status] || '요청에 실패했어요', ' ', h('small', { text: 'HTTP ' + (status || '연결 실패') })]);
+    return h('div', { class: 'err', role: 'alert' }, [statusText(status), ' ', h('small', { text: 'HTTP ' + (status || '연결 실패') })]);
   }
   function show(node) { result.hidden = false; while (result.firstChild) result.removeChild(result.firstChild); result.appendChild(node); }
   function copyBtn(getText) {
@@ -78,7 +84,7 @@
   document.querySelectorAll('.tab').forEach(function (t) {
     t.addEventListener('click', function () {
       document.querySelectorAll('.tab').forEach(function (x) { var on = x === t; x.classList.toggle('on', on); x.setAttribute('aria-selected', on ? 'true' : 'false'); });
-      $('tab-use').hidden = t.dataset.tab !== 'use'; $('tab-guide').hidden = t.dataset.tab !== 'guide';
+      $('tab-use').hidden = t.dataset.tab !== 'use'; $('tab-file').hidden = t.dataset.tab !== 'file'; $('tab-guide').hidden = t.dataset.tab !== 'guide';
     });
   });
 
@@ -104,8 +110,61 @@
 
   // ---- 시작: 키 목록과 서비스 계정 이름 ----
   fetch('/api/config').then(function (r) { return r.json(); }).then(function (c) {
-    $('sa').textContent = '이 포털은 ' + (c.service_account || '서비스 계정') + ' 권한으로 동작해요';
-    (c.keys || []).forEach(function (k) { keySel.appendChild(h('option', { value: k, text: k })); });
+    saName = String(c.service_account || '').split('/').pop();
+    (c.keys || []).forEach(function (k) { keySel.appendChild(h('option', { value: k, text: k })); $('fkey').appendChild(h('option', { value: k, text: k })); });
     guide(keySel.value);
-  }).catch(function () { $('sa').textContent = '설정을 불러오지 못했어요'; });
+  }).catch(function () { show(h('div', { class: 'err', text: '설정을 불러오지 못했어요' })); });
+
+  // ---- 파일 암호화 (브라우저 안에서; 형식은 pkg/kmsfile과 호환) ----
+  var MAX_FILE = 1024 * 1024 * 1024, fileEl = $('file'), fstatus = $('f-status'), fresult = $('f-result'), lastUrl = null;
+  function fmsg(text, isErr) { fstatus.textContent = text; fstatus.className = isErr ? 'err' : 'meta'; }
+  function fclear() { if (lastUrl) { URL.revokeObjectURL(lastUrl); lastUrl = null; } while (fresult.firstChild) fresult.removeChild(fresult.firstChild); fresult.hidden = true; }
+  function offer(blob, name) {
+    fclear(); lastUrl = URL.createObjectURL(blob);
+    fresult.hidden = false;
+    fresult.appendChild(h('a', { class: 'btn', href: lastUrl, download: name, text: '내려받기: ' + name }));
+  }
+  async function postJSON(path, body) {
+    var res = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Demo-Request': '1' }, body: JSON.stringify(body) });
+    if (!res.ok) { var e = new Error('HTTP'); e.status = res.status; throw e; }
+    return res.json();
+  }
+  function b64ToBytes(b64) { return Uint8Array.from(atob(b64), function (c) { return c.charCodeAt(0); }); }
+  function pickFile() {
+    var f = fileEl.files && fileEl.files[0];
+    if (!f) { fmsg('파일을 먼저 고르세요.', true); return null; }
+    if (f.size > MAX_FILE) { fmsg('파일이 너무 커요 (1 GiB 이하만 지원해요). 명령줄 도구 kms를 쓰세요.', true); return null; }
+    return f;
+  }
+  async function fileOp(kind) {
+    var f = pickFile(); if (!f) return;
+    var btns = [$('f-enc'), $('f-dec')]; btns.forEach(function (b) { b.disabled = true; }); fclear();
+    try {
+      if (kind === 'enc') {
+        fmsg('데이터 키를 받는 중…');
+        var dk = await postJSON('/datakey', { key: $('fkey').value });
+        fmsg('브라우저에서 암호화하는 중…');
+        var blob = await KMSFile.encryptFile(f, $('fkey').value, dk.ciphertext, b64ToBytes(dk.plaintext), function (p) { fmsg('암호화 중… ' + Math.round(p * 100) + '%'); });
+        dk = null;
+        offer(blob, f.name + '.kmsf'); fmsg('암호화 완료 (' + blob.size + ' B). 원문은 서버로 보내지 않았어요.');
+      } else {
+        var hd = await KMSFile.readHeader(f);
+        var opt = Array.prototype.some.call($('fkey').options, function (o) { return o.value === hd.keyName; });
+        if (!opt) throw Object.assign(new Error('KEY'), { keyName: hd.keyName });
+        fmsg('데이터 키를 복호화하는 중…');
+        var r = await postJSON('/decrypt', { key: hd.keyName, value: hd.dkCiphertext });
+        fmsg('브라우저에서 복호화하는 중…');
+        var out = await KMSFile.decryptFile(f, hd, b64ToBytes(r.value), function (p) { fmsg('복호화 중… ' + Math.round(p * 100) + '%'); });
+        offer(out, f.name.replace(/\.kmsf$/i, '') || 'decrypted'); fmsg('복호화 완료 (' + out.size + ' B).');
+      }
+    } catch (e) {
+      if (e.status) fmsg(statusText(e.status) + ' (HTTP ' + e.status + ')', true);
+      else if (e.message === 'AUTH') fmsg('파일이 변조되었거나 잘렸어요(인증 실패). 결과를 만들지 않았어요.', true);
+      else if (e.message === 'KEY') fmsg('이 파일은 이 포털에서 쓸 수 없는 키(' + e.keyName + ')로 암호화되었어요.', true);
+      else fmsg(e.message || '처리하지 못했어요', true);
+    } finally { btns.forEach(function (b) { b.disabled = false; }); }
+  }
+  $('f-enc').addEventListener('click', function () { fileOp('enc'); });
+  $('f-dec').addEventListener('click', function () { fileOp('dec'); });
+  window.addEventListener('pagehide', function () { fclear(); fileEl.value = ''; });
 })();

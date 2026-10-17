@@ -159,3 +159,28 @@ func (c *Client) Rewrap(ctx context.Context, key, ciphertext string) (newCiphert
 	}
 	return resp.Ciphertext, status, latency, nil
 }
+
+// DataKey는 POST /v1/datakey/{key}를 호출한다(256비트, 평문 포함). 반환: 키의 암호문(kms:v..)과 평문 data key(base64).
+// 평문 data key는 호출한 쪽이 쓰고 버려야 한다 — 이 클라이언트는 로그에 남기지 않는다.
+func (c *Client) DataKey(ctx context.Context, key string) (ciphertext, plaintextB64 string, status int, err error) {
+	req, err := c.newRequest(ctx, "/v1/datakey/"+url.PathEscape(key), map[string]any{"bits": 256})
+	if err != nil {
+		return "", "", 0, err
+	}
+	body, status, _, err := c.doTimed(req)
+	if err != nil {
+		return "", "", status, err
+	}
+	if status != http.StatusOK {
+		// 응답 본문에는 평문 키가 없으므로 오류 문구에 넣어도 안전하다.
+		return "", "", status, fmt.Errorf("datakey: unexpected status %d: %s", status, strings.TrimSpace(string(body)))
+	}
+	var resp struct {
+		Ciphertext string `json:"ciphertext"`
+		Plaintext  string `json:"plaintext"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return "", "", status, fmt.Errorf("datakey: decoding response: %w", err)
+	}
+	return resp.Ciphertext, resp.Plaintext, status, nil
+}

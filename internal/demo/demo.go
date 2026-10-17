@@ -74,6 +74,7 @@ func Handler(client *bench.Client, origin string, cfg Config) http.Handler {
 	})
 	m.Handle("GET /portal.css", files)
 	m.Handle("GET /portal.js", files)
+	m.Handle("GET /kmsfile.js", files)
 	// 화면이 키 목록과 서비스 계정 이름을 가져가는 곳. 토큰·주소 같은 비밀은 없다.
 	m.HandleFunc("GET /api/config", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -115,7 +116,7 @@ func Handler(client *bench.Client, origin string, cfg Config) http.Handler {
 			}
 			if err != nil {
 				// 401/403(인증·권한), 404(KMS에 그 키가 없음)는 그대로 알려 주고, 나머지는 503으로 뭉갠다.
-				if status != 401 && status != 403 && status != 404 {
+				if status != 401 && status != 403 && status != 404 && status != 409 {
 					status = 503
 				}
 				http.Error(w, "Transit request failed", status)
@@ -125,6 +126,38 @@ func Handler(client *bench.Client, origin string, cfg Config) http.Handler {
 			json.NewEncoder(w).Encode(map[string]string{"value": value})
 		})
 	}
+	// 파일 암호화 탭용 data key 중계. 파일 자체는 서버로 오지 않는다 — 브라우저가 이 키로 직접 암호화한다(KMSF 형식).
+	// 기존 허용 목록(DEMO_KEYS)과 Origin 검사를 그대로 적용한다. 응답의 평문 키는 이 요청의 브라우저만 받으며
+	// 서버는 저장·로그하지 않는다. 복호화는 기존 /decrypt(헤더의 data key 암호문 → 평문 키)를 그대로 쓴다.
+	m.HandleFunc("POST /datakey", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Origin") != origin || r.Header.Get("X-Demo-Request") != "1" {
+			http.Error(w, "origin denied", 403)
+			return
+		}
+		var req struct {
+			Key string `json:"key"`
+		}
+		d := json.NewDecoder(r.Body)
+		d.DisallowUnknownFields()
+		if d.Decode(&req) != nil {
+			http.Error(w, "invalid input", 400)
+			return
+		}
+		if !allowed[req.Key] {
+			http.Error(w, "key not allowed", 400)
+			return
+		}
+		ct, plain, status, err := client.DataKey(r.Context(), req.Key)
+		if err != nil {
+			if status != 401 && status != 403 && status != 404 && status != 409 {
+				status = 503
+			}
+			http.Error(w, "Transit request failed", status)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"ciphertext": ct, "plaintext": plain})
+	})
 	return security.Limit(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/healthz" && r.URL.Path != "/readyz" && r.Host != strings.TrimPrefix(origin, "https://") {
 			http.Error(w, "host denied", 403)

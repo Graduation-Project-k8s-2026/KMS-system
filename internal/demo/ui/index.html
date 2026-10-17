@@ -9,13 +9,13 @@
 <body>
 <header class="top">
   <div class="brand">KMS <span>사용자 포털</span></div>
-  <div id="sa" class="sa">서비스 계정 확인 중…</div>
 </header>
 <main class="wrap">
   <h1>KMS 사용자 포털</h1>
   <p class="sub">키로 데이터를 암호화·복호화하고, 옛 암호문을 새 키 버전으로 옮겨 볼 수 있어요. 입력한 내용은 이 페이지를 떠나면 지워져요.</p>
   <nav class="tabs" role="tablist">
     <button class="tab on" data-tab="use" role="tab" aria-selected="true">사용하기</button>
+    <button class="tab" data-tab="file" role="tab" aria-selected="false">파일 암호화</button>
     <button class="tab" data-tab="guide" role="tab" aria-selected="false">사용 가이드</button>
   </nav>
 
@@ -47,6 +47,25 @@
     </div>
   </section>
 
+  <section id="tab-file" hidden>
+    <div class="panel">
+      <h2>파일 암호화 (브라우저 안에서)</h2>
+      <p class="hint">파일은 <b>이 브라우저 안에서</b> 암호화·복호화돼요. <b>원문 파일은 서버로 보내지 않아요.</b> 서버(KMS)에서는 1회용 데이터 키만 받아 와요.
+        결과 파일(<code>.kmsf</code>)은 명령줄 도구(<code>kms decrypt</code>)로도 풀 수 있어요.</p>
+      <label class="lbl" for="fkey">사용할 키</label>
+      <select id="fkey"></select>
+      <label class="lbl" for="file">파일</label>
+      <input id="file" type="file">
+      <div class="actions">
+        <button class="btn" id="f-enc" type="button">파일 암호화</button>
+        <button class="btn" id="f-dec" type="button">파일 복호화</button>
+      </div>
+      <div id="f-status" class="meta" role="status"></div>
+      <div id="f-result" hidden></div>
+      <p class="hint">브라우저 메모리를 쓰므로 1 GiB 이하 파일만 지원해요. 큰 파일은 명령줄 도구를 쓰세요. 이 포털은 tailnet 전용 시험 도구예요.</p>
+    </div>
+  </section>
+
   <section id="tab-guide" hidden>
     <div class="panel">
       <h2>Transit API 사용 가이드</h2>
@@ -55,6 +74,7 @@
     </div>
   </section>
 </main>
+<script src="kmsfile.js"></script>
 <script src="portal.js"></script>
 </body>
 </html>

@@ -61,7 +61,11 @@ package seal
 import (
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"io"
+	"io/fs"
+	"strconv"
+	"strings"
 	"sync"
 
 	kmscrypto "github.com/Graduation-Project-k8s-2026/KMS-system/internal/crypto"
@@ -135,10 +139,66 @@ type TPMOption func(*TPMSeal)
 
 // WithPCRs는 Seal 시점에 봉인을 걸 PCR 인덱스들을 지정한다. 지정하지 않으면
 // PCR을 쓰지 않는다(기본값) — 그 트레이드오프는 파일 상단 주석 참고.
+//
+// 운영에서는 환경변수 KMS_TPM_PCRS(예: "7")로 켠다(ParsePCRs 참고). 기본을
+// 끄는 이유와 켰을 때의 위험(커널/펌웨어 업데이트 후 자동 해제 실패 → 복구
+// 조각 필요)은 docs/decisions.md ADR-010 참고.
 func WithPCRs(pcrs []int) TPMOption {
 	return func(s *TPMSeal) {
 		s.pcrSelection = tpm2.PCRSelection{Hash: tpm2.AlgSHA256, PCRs: pcrs}
 	}
+}
+
+// DefaultTPMDevice: 리눅스 커널의 TPM 리소스 매니저 장치. /dev/tpm0(직접 접근)
+// 대신 tpmrm0를 기본으로 쓰는 이유 — 리소스 매니저가 핸들/세션 충돌을
+// 막아 줘서 여러 프로세스가 같은 TPM을 써도 안전하다.
+const DefaultTPMDevice = "/dev/tpmrm0"
+
+// OpenTPMDevice는 path의 실제 TPM 장치(또는 swtpm vtpm-proxy가 만든 가짜
+// 장치, 또는 에뮬레이터 유닉스 소켓)를 연다. go-tpm의 OpenTPM은 일반 파일
+// 열기(os.OpenFile)만 쓰는 순수 Go 코드라 CGO가 필요 없다 — 서버 바이너리는
+// CGO 없이 빌드된다. (cgo가 필요한 건 테스트의 소프트웨어 시뮬레이터뿐이고,
+// 그건 tpm_lab 태그 테스트에서만 쓴다.)
+//
+// 실패 원인(장치 없음 / 권한 없음 / TPM 2.0 아님)은 메시지에 구분해 담는다.
+// 운영자가 로그 한 줄만 보고 "tss 그룹이 빠졌나, swtpm이 안 떴나"를 알 수
+// 있어야 하기 때문이다. errors.Is(err, fs.ErrNotExist / fs.ErrPermission)도
+// 그대로 동작한다.
+func OpenTPMDevice(path string) (io.ReadWriteCloser, error) {
+	if path == "" {
+		path = DefaultTPMDevice
+	}
+	dev, err := tpm2.OpenTPM(path)
+	switch {
+	case err == nil:
+		return dev, nil
+	case errors.Is(err, fs.ErrNotExist):
+		return nil, fmt.Errorf("seal: TPM device %s not found (is swtpm/vtpm running and the device mounted?): %w", path, err)
+	case errors.Is(err, fs.ErrPermission):
+		return nil, fmt.Errorf("seal: permission denied opening TPM device %s (check group membership, e.g. tss): %w", path, err)
+	default:
+		return nil, fmt.Errorf("seal: cannot open TPM device %s: %w", path, err)
+	}
+}
+
+// ParsePCRs는 KMS_TPM_PCRS 값("7" 또는 "0,2,7")을 PCR 인덱스 목록으로 바꾼다.
+// 빈 문자열이면 nil(PCR 미사용). 범위(0~23) 밖이거나 숫자가 아니면 에러 —
+// 설정 오타를 조용히 무시하면 "PCR을 켠 줄 알았는데 꺼져 있는" 상태가 되기
+// 때문이다.
+func ParsePCRs(v string) ([]int, error) {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return nil, nil
+	}
+	var out []int
+	for _, f := range strings.Split(v, ",") {
+		n, err := strconv.Atoi(strings.TrimSpace(f))
+		if err != nil || n < 0 || n > 23 {
+			return nil, fmt.Errorf("seal: invalid PCR index %q (want 0-23)", f)
+		}
+		out = append(out, n)
+	}
+	return out, nil
 }
 
 // NewTPMSeal은 tpm(시뮬레이터/실제TPM/vTPM)과 sealed blob을 저장할 store로
@@ -195,27 +255,7 @@ func (s *TPMSeal) InitTPM() ([]byte, error) {
 	if _, err := rand.Read(rootKey); err != nil {
 		return nil, err
 	}
-
-	srk, err := s.storageRootKey()
-	if err != nil {
-		zeroBytesTPM(rootKey)
-		return nil, err
-	}
-	defer srk.Close()
-
-	blob, err := srk.Seal(rootKey, client.SealOpts{Current: s.pcrSelection})
-	if err != nil {
-		zeroBytesTPM(rootKey)
-		return nil, err
-	}
-
-	data, err := proto.Marshal(blob)
-	if err != nil {
-		zeroBytesTPM(rootKey)
-		return nil, err
-	}
-
-	if err := s.store.Put(tpmBlobStorageKey, data); err != nil {
+	if err := s.sealAndStoreLocked(rootKey); err != nil {
 		zeroBytesTPM(rootKey)
 		return nil, err
 	}
@@ -264,6 +304,61 @@ func (s *TPMSeal) Unseal() ([]byte, error) {
 	}
 
 	return rootKey, nil
+}
+
+// sealAndStoreLocked는 rootKey를 TPM으로 봉인해 blob을 store에 저장한다.
+// InitTPM(새 키)과 SealExisting(기존 키)이 같은 blob 형식·저장 키를 쓰도록
+// 한 곳으로 모은 공통 경로다. 호출자가 s.mu를 잡고 있어야 하며, rootKey는
+// 건드리지 않는다(zeroing은 호출자 책임).
+func (s *TPMSeal) sealAndStoreLocked(rootKey []byte) error {
+	srk, err := s.storageRootKey()
+	if err != nil {
+		return err
+	}
+	defer srk.Close()
+
+	blob, err := srk.Seal(rootKey, client.SealOpts{Current: s.pcrSelection})
+	if err != nil {
+		return err
+	}
+	data, err := proto.Marshal(blob)
+	if err != nil {
+		return err
+	}
+	return s.store.Put(tpmBlobStorageKey, data)
+}
+
+// SealExisting은 이미 존재하는 Root Key를 TPM으로 봉인해 blob을 저장한다.
+// "Shamir → TPM 이전"에 쓴다. InitTPM과 달리 새 키를 만들지 않는다 — 운영
+// 클러스터의 Secret은 현재 Root Key로만 읽히므로, 이전은 같은 키를 다른
+// 방식으로 "다시 포장"하는 것이어야 한다(ADR-010: 루트 키 불변).
+//
+// 이미 blob이 있으면 ErrTPMAlreadyInitialized — 남아 있는 blob이 어떤 키를
+// 담고 있는지 모르는 상태에서 덮어쓰면 복구 수단 하나를 잃을 수 있어서, 사람이
+// 확인하기 전에는 거부한다. 받은 root 슬라이스는 수정하지 않는다.
+func (s *TPMSeal) SealExisting(root []byte) error {
+	if len(root) != kmscrypto.KeyLen {
+		return ErrTPMInvalidRootKeyLength
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	existing, err := s.store.Get(tpmBlobStorageKey)
+	if err != nil {
+		return err
+	}
+	if existing != nil {
+		return ErrTPMAlreadyInitialized
+	}
+	return s.sealAndStoreLocked(root)
+}
+
+// RemoveBlob은 저장된 sealed blob을 지운다. "TPM → Shamir 되돌리기"와 이전
+// 도중 실패했을 때의 롤백에 쓴다. blob이 없어도 에러 없이 성공한다(멱등).
+func (s *TPMSeal) RemoveBlob() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.store.Delete(tpmBlobStorageKey)
 }
 
 // IsConfigured는 store에 sealed blob이 이미 존재하는지(InitTPM이 이미

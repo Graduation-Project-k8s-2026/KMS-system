@@ -58,7 +58,7 @@ func (b *Barrier) Unseal() error {
 	if err != nil {
 		return err
 	}
-	if b.sealer.Type() == "shamir" {
+	if t := b.sealer.Type(); t == SealShamir || t == SealTPM {
 		if err := b.validateRoot(rootKey); err != nil {
 			zeroBytes(rootKey)
 			return err

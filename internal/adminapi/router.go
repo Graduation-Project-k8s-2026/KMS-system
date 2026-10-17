@@ -45,7 +45,7 @@ func NewRouter(deps Deps) http.Handler {
 	for _, path := range []string{"/v1/sys/seal-status", "/v1/keys", "/v1/keys/", "/v1/keys/{name}"} {
 		r.Method("GET", path, proxy)
 	}
-	for _, path := range []string{"/v1/sys/init", "/v1/sys/unseal", "/v1/sys/seal", "/v1/keys", "/v1/keys/", "/v1/keys/{name}/rotate", "/v1/keys/{name}/config"} {
+	for _, path := range []string{"/v1/sys/init", "/v1/sys/unseal", "/v1/sys/seal", "/v1/sys/seal-migrate", "/v1/keys", "/v1/keys/", "/v1/keys/{name}/rotate", "/v1/keys/{name}/config"} {
 		r.Method("POST", path, proxy)
 	}
 	r.Get("/api/info", handleInfo(deps.Info, deps.AuditDir != ""))

@@ -112,3 +112,14 @@ func TestAuditExactLimitAndPayloadExclusion(t *testing.T) {
 		t.Fatal("quota failure modified log")
 	}
 }
+
+func TestActionNamesSealMigrate(t *testing.T) {
+	for path, want := range map[string]string{
+		"/v1/sys/seal-migrate": "POST /v1/sys/seal-migrate",
+		"/v1/sys/seal":         "POST /v1/sys/seal",
+	} {
+		if got := action(httptest.NewRequest("POST", path, nil)); got != want {
+			t.Errorf("action(%s) = %q, want %q", path, got, want)
+		}
+	}
+}

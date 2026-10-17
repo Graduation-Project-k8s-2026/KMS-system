@@ -16,6 +16,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/api/httputil"
+	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/audit"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/barrier"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/keys"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/seal"
@@ -521,6 +522,7 @@ func handleCreateKey(deps Deps) http.HandlerFunc {
 			autoRotate = *req.AutoRotatePeriodSec
 		}
 
+		audit.SetKey(r, req.Name) // 경로에 이름이 없는 작업이라 핸들러가 감사 기록에 대상 키를 알린다
 		meta, err := deps.Keys.CreateKey(req.Name, autoRotate)
 		if err != nil {
 			if errors.Is(err, barrier.ErrInitialized) {

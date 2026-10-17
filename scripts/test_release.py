@@ -25,6 +25,7 @@ class Contracts(unittest.TestCase):
   self.assertEqual(env['KMS_AUTO_UNSEAL'],'false');self.assertEqual(env['KMS_AUTHZ_FAIL_OPEN'],'false')
   self.assertTrue(env['KMS_TRANSIT_TLS_CERT']);self.assertTrue(env['KMS_TRANSIT_TLS_KEY'])
   self.assertEqual(env['KMS_SEAL_ALLOWED'],'shamir,tpm');self.assertNotIn('KMS_SEAL_TYPE',env)
+  self.assertEqual(env['KMS_TRANSIT_AUDIT_DIR'],'/transit-audit')
   self.assertEqual(env['KMS_TPM_DEVICE'],'/dev/tpmrm0');self.assertNotIn('KMS_TPM_PCRS',env)
   self.assertEqual(static['spec']['securityContext']['supplementalGroups'],[995])
   tpm=next(v for v in static['spec']['volumes'] if v['name']=='tpm')

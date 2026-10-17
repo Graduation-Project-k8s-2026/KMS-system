@@ -56,6 +56,15 @@ var (
 		Buckets:   transitSizeBuckets,
 	}, []string{"operation"})
 
+	// AuditDroppedTotal: Transit 비동기 감사 버퍼가 가득 차 버려진(기록하지 못한) 이벤트 수.
+	// 0이 아니면 감사 기록에 구멍이 있다는 뜻이다 — 버퍼 크기/디스크 처리량을 점검한다.
+	AuditDroppedTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Namespace: "kms",
+		Subsystem: "audit",
+		Name:      "dropped_total",
+		Help:      "Transit 비동기 감사에서 버퍼 포화 등으로 버려진 이벤트 수.",
+	})
+
 	// AuthzSARRequestsTotal: SubjectAccessReview 호출 수. result는
 	// allowed/denied/error다. 주체·namespace는 라벨에 넣지 않는다.
 	AuthzSARRequestsTotal = promauto.NewCounterVec(prometheus.CounterOpts{

@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/api/httputil"
+	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/audit"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/authn"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/authz"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/barrier"
@@ -45,6 +46,10 @@ type Deps struct {
 	// 권한을 가질 필요가 없게 하는 것)를 인가 요구로 다시 무색하게 만들지
 	// 않기 위함이다.
 	Authorizer *authz.Authorizer
+
+	// Audit: 설정돼 있으면(KMS_TRANSIT_AUDIT_DIR) encrypt/decrypt/rewrap 요청을 비동기로 감사
+	// 기록한다. nil이면 기록하지 않는다.
+	Audit *audit.TransitLog
 }
 
 // NewRouter는 Deps를 엮어 chi 라우터를 구성해 반환한다. 관리 라우트(키
@@ -86,9 +91,9 @@ func NewRouter(deps Deps) http.Handler {
 	r.Group(func(r chi.Router) {
 		r.Use(httputil.SealedGuard(deps.Barrier))
 
-		r.With(metrics.InstrumentTransit("encrypt"), authzMiddleware(deps.Authorizer, "encrypt")).Post("/v1/encrypt/{name}", handleEncrypt(deps))
-		r.With(metrics.InstrumentTransit("decrypt"), authzMiddleware(deps.Authorizer, "decrypt")).Post("/v1/decrypt/{name}", handleDecrypt(deps))
-		r.With(metrics.InstrumentTransit("rewrap"), authzMiddleware(deps.Authorizer, "rewrap")).Post("/v1/rewrap/{name}", handleRewrap(deps))
+		r.With(metrics.InstrumentTransit("encrypt"), auditMiddleware(deps.Audit, "encrypt"), authzMiddleware(deps.Authorizer, "encrypt")).Post("/v1/encrypt/{name}", handleEncrypt(deps))
+		r.With(metrics.InstrumentTransit("decrypt"), auditMiddleware(deps.Audit, "decrypt"), authzMiddleware(deps.Authorizer, "decrypt")).Post("/v1/decrypt/{name}", handleDecrypt(deps))
+		r.With(metrics.InstrumentTransit("rewrap"), auditMiddleware(deps.Audit, "rewrap"), authzMiddleware(deps.Authorizer, "rewrap")).Post("/v1/rewrap/{name}", handleRewrap(deps))
 	})
 
 	return r

@@ -80,6 +80,10 @@ spec:
       value: 'false'
     - name: KMS_AUDIT_DIR
       value: /core-audit
+    # Transit 요청 비동기 감사(키 이름·주체·결과 코드·지연; 본문/토큰/평문/암호문은 기록 안 함).
+    # 비우면 꺼진다. 호스트 디렉터리는 미리 만들어 둬야 한다: install -d -o 10001 -g 10001 -m 0700 /var/lib/custom-kms/transit-audit
+    - name: KMS_TRANSIT_AUDIT_DIR
+      value: /transit-audit
     securityContext:
       allowPrivilegeEscalation: false
       readOnlyRootFilesystem: true
@@ -110,6 +114,8 @@ spec:
       readOnly: true
     - name: core-audit
       mountPath: /core-audit
+    - name: transit-audit
+      mountPath: /transit-audit
     - name: tpm
       mountPath: /dev/tpmrm0
   volumes:
@@ -140,6 +146,10 @@ spec:
   - name: core-audit
     hostPath:
       path: /var/lib/custom-kms/core-audit
+      type: Directory
+  - name: transit-audit
+    hostPath:
+      path: /var/lib/custom-kms/transit-audit
       type: Directory
   # TPM 장치. 의도적으로 type을 지정하지 않는다(= kubelet이 사전 검사를 하지 않음).
   # type: CharDevice로 두면 장치가 없는 노드(TPM을 안 쓰는 Shamir 노드), 또는 swtpm이

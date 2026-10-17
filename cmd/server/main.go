@@ -84,6 +84,19 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// Transit 요청 감사(비동기). KMS_TRANSIT_AUDIT_DIR이 비어 있으면 끈다. 관리 감사(KMS_AUDIT_DIR)와는
+	// 파일 형식·위치가 별개다. 버퍼가 가득 차면 요청을 막지 않고 버리고 kms_audit_dropped_total을 올린다.
+	var transitAudit *audit.TransitLog
+	if dir := os.Getenv("KMS_TRANSIT_AUDIT_DIR"); dir != "" {
+		transitAudit, err = audit.NewTransit(dir,
+			getenvIntDefault("KMS_TRANSIT_AUDIT_BUFFER", audit.DefaultTransitBuffer),
+			time.Duration(getenvIntDefault("KMS_TRANSIT_AUDIT_FSYNC_MS", int(audit.DefaultTransitFsync/time.Millisecond)))*time.Millisecond)
+		if err != nil {
+			log.Fatalf("transit audit: %v", err)
+		}
+		defer transitAudit.Close() // 정상 종료 시 남은 기록을 flush한다
+	}
+
 	storageKind := getenvDefault("KMS_STORAGE", "file")
 	dataDir := getenvDefault("KMS_DATA_DIR", "./data")
 	autoUnseal := os.Getenv("KMS_AUTO_UNSEAL") == "true"

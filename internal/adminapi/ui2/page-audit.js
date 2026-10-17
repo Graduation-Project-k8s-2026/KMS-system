@@ -4,7 +4,7 @@
   var K = window.KMS, h = K.h, clear = K.clear;
 
   K.pages.audit = async function (view) {
-    K.pageHead(view, '감사 로그', '오늘 기록된 요청 (최대 1000건)');
+    K.pageHead(view, '감사 로그', '오늘 기록된 관리 작업과 암복호화(Transit) 요청 · 각각 최대 1000건');
     var box = h('div', { class: 'table-wrap' }, h('div', { class: 'empty', text: '불러오는 중…' }));
     var bar = h('div', { class: 'panel filters' });
     view.appendChild(bar); view.appendChild(box);
@@ -18,26 +18,33 @@
     function uniq(f) { var s = {}; all.forEach(function (e) { s[f(e)] = 1; }); return Object.keys(s).sort(); }
     // "POST /v1/keys completed" 에서 동작 종류만 뽑는다(감사 기록에는 키 이름이 남지 않는다)
     function actionOf(e) { return String(e.action || '').replace(/ (requested|completed)$/, ''); }
-    var fUser = h('select', { 'aria-label': '사용자' }), fAct = h('select', { 'aria-label': '동작' }), fRes = h('select', { 'aria-label': '결과' }), fSort = h('select', { 'aria-label': '정렬' });
+    // 경로: 관리 기록(source=admin)은 'admin', Transit 기록은 listener(internal|external)
+    function pathOf(e) { return e.source === 'transit' ? (e.listener || 'internal') : 'admin'; }
+    var PATH_KO = { admin: '관리', internal: 'Transit 내부', external: 'Transit 외부' };
+    var fUser = h('select', { 'aria-label': '사용자' }), fKey = h('select', { 'aria-label': '키' }), fPath = h('select', { 'aria-label': '경로' }), fAct = h('select', { 'aria-label': '동작' }), fRes = h('select', { 'aria-label': '결과' }), fSort = h('select', { 'aria-label': '정렬' });
     opts(fUser, uniq(function (e) { return e.subject; }), '모든 사용자');
+    opts(fKey, uniq(function (e) { return e.key || ''; }).filter(Boolean), '모든 키');
     opts(fAct, uniq(actionOf), '모든 동작');
+    [['', '모든 경로'], ['admin', '관리(콘솔·소켓)'], ['internal', 'Transit 내부'], ['external', 'Transit 외부']].forEach(function (o) { fPath.appendChild(h('option', { value: o[0], text: o[1] })); });
     [['', '모든 결과'], ['ok', '성공'], ['fail', '실패']].forEach(function (o) { fRes.appendChild(h('option', { value: o[0], text: o[1] })); });
     [['desc', '최신순'], ['asc', '오래된순']].forEach(function (o) { fSort.appendChild(h('option', { value: o[0], text: o[1] })); });
-    var q = h('input', { type: 'text', placeholder: '검색 (사용자·동작·요청 ID)', 'aria-label': '검색' });
+    var q = h('input', { type: 'text', placeholder: '검색 (사용자·키·동작·IP·요청 ID)', 'aria-label': '검색' });
     var count = h('span', { class: 'muted' });
     var csvBtn = h('button', { class: 'btn ghost small', type: 'button', text: 'CSV 내려받기' });
-    bar.appendChild(h('div', { class: 'row' }, [fUser, fAct, fRes, fSort, q, csvBtn, count]));
-    bar.appendChild(h('div', { class: 'hint-small', text: '감사 기록에는 키 이름이 남지 않아 키 이름으로는 거를 수 없어요. 동작 종류(예: POST /v1/keys)로 거르세요.' }));
+    bar.appendChild(h('div', { class: 'row' }, [fUser, fKey, fPath, fAct, fRes, fSort, q, csvBtn, count]));
+    bar.appendChild(h('div', { class: 'hint-small', text: '관리 기록은 요청 시작·완료가 한 쌍으로 남아요. Transit 기록은 요청당 한 줄이고 본문·토큰·평문은 기록하지 않아요. 외부 경로는 클라이언트 IP가 함께 남아요.' }));
 
     var shown = [];
     function draw() {
       var term = q.value.trim().toLowerCase();
       shown = all.filter(function (e) {
         if (fUser.value && e.subject !== fUser.value) return false;
+        if (fKey.value && e.key !== fKey.value) return false;
+        if (fPath.value && pathOf(e) !== fPath.value) return false;
         if (fAct.value && actionOf(e) !== fAct.value) return false;
         if (fRes.value === 'ok' && !e.success) return false;
         if (fRes.value === 'fail' && e.success) return false;
-        if (term && (e.subject + ' ' + e.action + ' ' + e.request_id).toLowerCase().indexOf(term) < 0) return false;
+        if (term && (e.subject + ' ' + e.action + ' ' + e.request_id + ' ' + (e.key || '') + ' ' + (e.client_ip || '')).toLowerCase().indexOf(term) < 0) return false;
         return true;
       }).sort(function (a, b) { return (new Date(a.utc) - new Date(b.utc)) * (fSort.value === 'asc' ? 1 : -1); });
       count.textContent = shown.length + '건';
@@ -45,18 +52,19 @@
       if (!shown.length) { box.appendChild(h('div', { class: 'empty', text: all.length ? '조건에 맞는 기록이 없어요' : '기록이 없어요' })); return; }
       var body = h('tbody');
       shown.slice(0, 200).forEach(function (e) {
-        body.appendChild(h('tr', {}, [h('td', { text: K.fmtDateSec(e.utc) }), h('td', { text: e.subject }), h('td', { class: 'mono', text: e.action }),
+        body.appendChild(h('tr', {}, [h('td', { text: K.fmtDateSec(e.utc) }), h('td', { text: e.subject }), h('td', {}, h('span', { class: 'pill ' + (pathOf(e) === 'external' ? 'pill-bad' : 'pill-muted'), text: PATH_KO[pathOf(e)] }) ),
+          h('td', { class: 'mono', text: e.action + (e.status ? ' · ' + e.status : '') }), h('td', { class: 'mono', text: e.key || '—' }), h('td', { class: 'mono', text: e.client_ip || '' }),
           h('td', {}, h('span', { class: 'pill ' + (e.allowed ? 'pill-ok' : 'pill-bad'), text: e.allowed ? '허용' : '거부' })),
           h('td', {}, h('span', { class: 'pill ' + (e.success ? 'pill-ok' : 'pill-bad'), text: e.success ? '성공' : '실패' })), h('td', { class: 'mono', text: e.request_id })]));
       });
-      box.appendChild(h('table', {}, [K.th(['시각', '사용자', '동작', '허용', '결과', '요청 ID']), body]));
+      box.appendChild(h('table', {}, [K.th(['시각', '사용자', '경로', '동작', '키', '클라이언트 IP', '허용', '결과', '요청 ID']), body]));
       if (shown.length > 200) box.appendChild(h('div', { class: 'hint-small pad', text: '화면에는 200건까지만 보여 줘요. 전체는 CSV로 내려받으세요.' }));
     }
-    [fUser, fAct, fRes, fSort].forEach(function (s) { s.addEventListener('change', draw); });
+    [fUser, fKey, fPath, fAct, fRes, fSort].forEach(function (s) { s.addEventListener('change', draw); });
     q.addEventListener('input', draw);
     csvBtn.addEventListener('click', function () {
-      var rows = shown.map(function (e) { return { utc: e.utc, subject: e.subject, action: e.action, allowed: e.allowed, success: e.success, request_id: e.request_id }; });
-      K.download('audit-log.csv', K.toCSV(rows, ['utc', 'subject', 'action', 'allowed', 'success', 'request_id']), 'text/csv');
+      var rows = shown.map(function (e) { return { utc: e.utc, source: e.source || '', listener: e.listener || '', subject: e.subject, action: e.action, key: e.key || '', client_ip: e.client_ip || '', status: e.status || '', allowed: e.allowed, success: e.success, request_id: e.request_id }; });
+      K.download('audit-log.csv', K.toCSV(rows, ['utc', 'source', 'listener', 'subject', 'action', 'key', 'client_ip', 'status', 'allowed', 'success', 'request_id']), 'text/csv');
     });
     draw();
   };

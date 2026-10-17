@@ -4,7 +4,7 @@
   var K = window.KMS, h = K.h, clear = K.clear;
   var ACTIVE = { queued: 1, running: 1, cancelling: 1 };
   // 서버(internal/jobs Spec.Validate)의 한도와 같은 값. 화면에서 먼저 검사해 알려 준다.
-  var LIMITS = { conc: [1, 32], count: [1, 100000], payload: [1, 1048576], duration: [0, 300] };
+  var LIMITS = { conc: [1, 32], count: [1, 100000], payload: [1, 1048576], duration: [0, 300] }; // 시간 기준이면 count는 필요 없다
   var PRESETS = [
     ['빠른 확인', { mode: 'transit', conc: 1, kind: 'count', count: 100, payload: 1024 }],
     ['표준', { mode: 'transit', conc: 16, kind: 'count', count: 2000, payload: 1024 }],
@@ -12,6 +12,18 @@
     ['큰 요청', { mode: 'transit', conc: 4, kind: 'count', count: 500, payload: 65536 }]
   ];
   var SWEEP = [1, 4, 16, 32];
+  // 기준(baseline) 실행: 이 브라우저에만 기억한다(편의 기능). 저장소를 못 쓰는 환경에서도 화면은 동작해야 하므로 try/catch.
+  var BASE_KEY = 'kms-bench-baseline';
+  function getBaseline() { try { return localStorage.getItem(BASE_KEY) || ''; } catch (e) { return ''; } }
+  function setBaseline(id) { try { if (id) localStorage.setItem(BASE_KEY, id); else localStorage.removeItem(BASE_KEY); } catch (e) { /* 무시 */ } }
+  // 기준 대비 변화율(%). 높을수록 좋은 값(처리량)과 낮을수록 좋은 값(지연·오류율)을 구분해 좋아짐/나빠짐 색을 정한다.
+  function pctDelta(v, base) { return (v === '' || base === '' || !base) ? null : (v - base) / base * 100; }
+  function deltaCell(v, base, higherIsBetter) {
+    var d = pctDelta(v, base);
+    if (d === null) return h('td', { text: '—' });
+    var good = higherIsBetter ? d > 0 : d < 0, flat = Math.abs(d) < 1;
+    return h('td', {}, h('span', { class: 'pill ' + (flat ? 'pill-muted' : good ? 'pill-ok' : 'pill-bad'), text: (d > 0 ? '+' : '') + d.toFixed(1) + '%' }));
+  }
   function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   function isActive(x) { return ACTIVE[x.state] || (x.state === 'succeeded' && x.upload === 'pending'); }
   function limitText(s) { return s.duration_seconds > 0 ? s.duration_seconds + '초' : s.count + '회'; }
@@ -53,7 +65,7 @@
       if (kindDur.checked) {
         var d = parseInt(durIn.value, 10);
         if (!inRange(d, [1, LIMITS.duration[1]])) return { err: '시간은 1~300초여야 해요.' };
-        spec.duration_seconds = d; spec.count = LIMITS.count[1]; // 서버는 횟수 상한(count)과 시간 중 먼저 끝나는 쪽에서 멈춘다
+        spec.duration_seconds = d; // 시간 기준 시험은 count를 보내지 않는다 (서버가 상한으로 채운다)
       } else {
         var c = parseInt(countIn.value, 10);
         if (!inRange(c, LIMITS.count)) return { err: '횟수는 1~100000 사이의 정수여야 해요.' };
@@ -89,7 +101,7 @@
         h('div', { class: 'form-grid four top-gap' }, [K.field('모드', modeSel), K.field('동시성', concIn, '1~32'), K.field('요청 크기(바이트)', payIn, '1~1048576 (최대 1 MiB)'),
           h('div', { class: 'field' }, [h('span', { class: 'lbl', text: '끝나는 조건' }),
             h('label', { class: 'row inline' }, [kindCount, ' 횟수 ', countIn]), h('label', { class: 'row inline' }, [kindDur, ' 시간(초) ', durIn]),
-            h('span', { class: 'hint', text: '시간으로 하면 횟수 상한 100000에 먼저 닿지 않는 한 그 시간 동안 측정해요' })])]),
+            h('span', { class: 'hint', text: '시간으로 하면 횟수를 따로 정하지 않고 그 시간 동안 측정해요 (왕복 상한 100000)' })])]),
         h('div', { class: 'row top-gap' }, [h('span', { class: 'lbl', text: '실행 방식' }),
           h('label', { class: 'row inline' }, [runSingle, ' 한 번']), h('label', { class: 'row inline' }, [runSweep, ' 스윕 (동시성 1→4→16→32)']),
           h('label', { class: 'row inline' }, [runRepeat, ' 같은 조건 반복 ', repIn, ' 회(최대 5)'])]),
@@ -105,6 +117,32 @@
     var csvBtn = h('button', { class: 'btn ghost small', type: 'button', text: '선택 CSV' }), jsonBtn = h('button', { class: 'btn ghost small', type: 'button', text: '선택 JSON' });
     var selNote = h('span', { class: 'muted', text: '비교하려면 시험을 2개 이상 체크하세요' });
     view.appendChild(h('div', { class: 'row top-gap' }, [h('h2', { class: 'inline-h', text: '시험 목록' }), csvBtn, jsonBtn, selNote]));
+    // 목록 필터: 모드·동시성·요청 크기·상태·날짜(그 날 이후). 선택(체크)은 필터와 무관하게 유지돼요.
+    var fMode = h('select', { 'aria-label': '모드 필터' }), fConc = h('select', { 'aria-label': '동시성 필터' }), fPay = h('select', { 'aria-label': '요청 크기 필터' }),
+      fState = h('select', { 'aria-label': '상태 필터' }), fDate = h('input', { type: 'date', 'aria-label': '이 날짜 이후' }), filterNote = h('span', { class: 'muted' });
+    function fillSel(sel, label, values, fmt) {
+      var cur = sel.value; clear(sel); sel.appendChild(h('option', { value: '', text: label }));
+      values.forEach(function (v) { sel.appendChild(h('option', { value: String(v), text: fmt ? fmt(v) : String(v) })); });
+      sel.value = values.map(String).indexOf(cur) >= 0 ? cur : '';
+    }
+    function uniqSorted(f, num) { var m = {}; runs.forEach(function (x) { m[f(x)] = 1; }); var a = Object.keys(m); return num ? a.map(Number).sort(function (p, q) { return p - q; }) : a.sort(); }
+    function refreshFilters() {
+      fillSel(fMode, '모든 모드', uniqSorted(function (x) { return x.spec.mode; }));
+      fillSel(fConc, '모든 동시성', uniqSorted(function (x) { return x.spec.concurrency; }, true), function (v) { return '동시성 ' + v; });
+      fillSel(fPay, '모든 요청 크기', uniqSorted(function (x) { return x.spec.payload_bytes; }, true), function (v) { return v + ' B'; });
+      fillSel(fState, '모든 상태', uniqSorted(function (x) { return x.state; }), function (v) { return K.STATE_KO[v] || v; });
+    }
+    function visibleRuns() {
+      var since = fDate.value ? new Date(fDate.value + 'T00:00:00') : null;
+      var out = runs.filter(function (x) {
+        return (!fMode.value || x.spec.mode === fMode.value) && (!fConc.value || String(x.spec.concurrency) === fConc.value) && (!fPay.value || String(x.spec.payload_bytes) === fPay.value) &&
+          (!fState.value || x.state === fState.value) && (!since || new Date(x.created_at) >= since);
+      });
+      filterNote.textContent = out.length === runs.length ? '' : out.length + ' / ' + runs.length + '개 표시';
+      return out;
+    }
+    [fMode, fConc, fPay, fState, fDate].forEach(function (e) { e.addEventListener('change', function () { drawTable(); }); });
+    view.appendChild(h('div', { class: 'row' }, [fMode, fConc, fPay, fState, h('label', { class: 'row inline' }, [h('span', { class: 'muted', text: '이 날짜 이후' }), fDate]), filterNote]));
     view.appendChild(tableBox); view.appendChild(compareBox); view.appendChild(detailBox);
 
     function row(x) { // 내려받기·비교용 평탄한 한 줄
@@ -120,9 +158,11 @@
     jsonBtn.addEventListener('click', function () { var r = selectedRows(); if (r.length) K.download('bench-results.json', JSON.stringify(r, null, 2), 'application/json'); });
 
     function drawCompare() {
-      var rows = selectedRows();
+      var rows = selectedRows(), baseId = getBaseline(), baseRun = runs.filter(function (x) { return x.run_id === baseId && cache[x.run_id]; })[0];
+      // 기준이 고정돼 있으면 기준 실행을 맨 앞에 두고 선택한 실행을 기준 대비 %로 비교한다 (기준이 선택에 없어도 포함).
+      if (baseRun && !rows.some(function (r) { return r.run_id === baseId; })) rows = [row(baseRun)].concat(rows);
       csvBtn.disabled = jsonBtn.disabled = !rows.length;
-      selNote.textContent = rows.length ? rows.length + '개 선택됨' : '비교하려면 시험을 2개 이상 체크하세요';
+      selNote.textContent = rows.length ? rows.length + '개 선택됨' : '비교하려면 시험을 2개 이상 체크하세요' + (baseRun ? '' : ' (또는 기준을 고정하세요)');
       clear(compareBox);
       if (rows.length < 2) return;
       var labels = rows.map(function (r) { return r.run_id.slice(0, 4) + ' c' + r.concurrency; });
@@ -130,6 +170,19 @@
         h('div', { class: 'two-col' }, [h('div', {}, [h('h3', { text: '처리량 (초당 요청)' }), K.barChart(rows.map(function (r, i) { return { label: labels[i], values: [r.rps === '' ? null : r.rps] }; }), ['초당 요청'], '요청/초')]),
           h('div', {}, [h('h3', { text: '지연 p50 / p95 / p99 (ms)' }), K.barChart(rows.map(function (r, i) { return { label: labels[i], values: [r.p50_ms, r.p95_ms, r.p99_ms].map(function (v) { return v === '' ? null : v; }) }; }), ['p50', 'p95', 'p99'], 'ms')])]),
         h('div', { class: 'hint-small', text: '막대 아래 이름은 실행 ID 앞 4자 + 동시성(c)이에요. 같은 동시성끼리 비교해야 공정해요.' })]));
+      if (baseRun) { // 기준 대비 표: 처리량은 높을수록, 지연·오류율은 낮을수록 좋아요
+        var b = row(baseRun), tb = h('tbody');
+        rows.forEach(function (r) {
+          var isBase = r.run_id === baseId;
+          tb.appendChild(h('tr', {}, [h('td', { text: (isBase ? '★ 기준 · ' : '') + r.mode + ' c' + r.concurrency + ' · ' + r.payload_bytes + ' B' }), h('td', { class: 'mono', text: r.run_id.slice(0, 8) }),
+            isBase ? h('td', { text: String(r.rps) }) : deltaCell(r.rps, b.rps, true), isBase ? h('td', { text: r.p50_ms + ' ms' }) : deltaCell(r.p50_ms, b.p50_ms, false),
+            isBase ? h('td', { text: r.p95_ms + ' ms' }) : deltaCell(r.p95_ms, b.p95_ms, false), isBase ? h('td', { text: r.p99_ms + ' ms' }) : deltaCell(r.p99_ms, b.p99_ms, false),
+            isBase ? h('td', { text: (r.error_rate * 100).toFixed(1) + '%' }) : deltaCell(r.error_rate, b.error_rate, false)]));
+        });
+        compareBox.firstChild.appendChild(h('h3', { class: 'top-gap', text: '기준 대비 변화' }));
+        compareBox.firstChild.appendChild(K.tableWrap(h('table', {}, [K.th(['실행', 'ID', '초당 요청', 'p50', 'p95', 'p99', '오류율']), tb])));
+        compareBox.firstChild.appendChild(h('div', { class: 'hint-small', text: '기준 행은 값 그대로, 나머지는 기준 대비 %예요. 같은 조건(모드·요청 크기)끼리 비교해야 의미가 있어요.' }));
+      }
     }
 
     async function showDetail(x) {
@@ -143,12 +196,44 @@
       p.appendChild(h('h3', { class: 'top-gap', text: '이 시험 시간대의 서버 초당 요청 (Prometheus)' }));
       var chart = h('div', { class: 'note', text: '불러오는 중…' }); p.appendChild(chart);
       if (!res) { chart.textContent = '결과가 아직 없어 시간대를 알 수 없어요.'; return; }
-      var m = await K.api('GET', '/api/dashboard/metrics?metric=requests&range=1');
+      // 시험이 시작된 지 얼마나 됐는지에 맞춰 가장 작은 시간 범위를 고른다 (15분/1시간/6시간/24시간, 서버 상한 24시간)
+      var ageMin = (Date.now() - new Date(res.started_at)) / 60000 + 1, win = ageMin <= 15 ? '15m' : ageMin <= 60 ? '1h' : ageMin <= 360 ? '6h' : '24h';
+      var m = await K.api('GET', '/api/dashboard/metrics?metric=requests&range=1&window=' + win);
       var t0 = new Date(res.started_at) / 1000 - 15, t1 = new Date(res.ended_at) / 1000 + 15;
       var pts = m.ok && m.data ? K.promSeries(m.data.data).filter(function (q) { return q[0] >= t0 && q[0] <= t1; }) : [];
       clear(chart); chart.className = '';
       if (pts.length > 1) chart.appendChild(K.lineChart(pts));
-      else { chart.className = 'note'; chart.textContent = m.ok ? '지표가 없어요. 서버 지표는 최근 15분만 볼 수 있어요.' : 'Prometheus 지표를 불러오지 못했어요: ' + K.errText(m); }
+      else { chart.className = 'note'; chart.textContent = m.ok ? '지표가 없어요. 서버 지표는 최근 24시간까지만 볼 수 있어요.' : 'Prometheus 지표를 불러오지 못했어요: ' + K.errText(m); }
+    }
+
+    function drawTable() {
+      clear(tableBox);
+      var list = visibleRuns();
+      if (!runs.length) tableBox.appendChild(h('div', { class: 'empty', text: '실행한 시험이 없어요' }));
+      else if (!list.length) tableBox.appendChild(h('div', { class: 'empty', text: '필터에 맞는 시험이 없어요' }));
+      else {
+        var body = h('tbody');
+        list.forEach(function (x) {
+          var res = cache[x.run_id], r = row(x), canSel = !!res;
+          var cb = h('input', { type: 'checkbox', 'aria-label': '비교에 포함', onchange: function () { selected[x.run_id] = cb.checked; drawCompare(); } });
+          if (!canSel) cb.disabled = true; else cb.checked = !!selected[x.run_id];
+          var elapsed = r.elapsed_seconds !== '' ? K.fmtDur(r.elapsed_seconds) : ACTIVE[x.state] ? K.fmtDur((Date.now() - new Date(x.created_at)) / 1000) + ' 경과' : '—';
+          var cancel = (x.state === 'queued' || x.state === 'running') ? K.lock(h('button', { class: 'btn ghost small', type: 'button', text: '취소', onclick: async function () {
+            var ok = await K.confirm('시험을 취소할까요?', [K.runLabel(x) + ' 실행을 중단해요.'], '시험 취소', true);
+            if (!ok) return;
+            var d = await K.api('DELETE', '/api/jobs/' + encodeURIComponent(x.run_id));
+            if (!d.ok) { K.showMsg(formMsg, K.failMsg('취소 실패: ', d), 'bad'); return; }
+            load();
+          } })) : null;
+          body.appendChild(h('tr', {}, [h('td', {}, cb), h('td', { text: (getBaseline() === x.run_id ? '★ ' : '') + K.runLabel(x) }), h('td', { text: x.spec.payload_bytes + ' B' }), h('td', {}, h('small', { class: 'mono muted', title: x.run_id, text: x.run_id.slice(0, 8) })),
+            h('td', { text: K.STATE_KO[x.state] || x.state }), h('td', { text: K.fmtDate(x.created_at) }), h('td', { text: elapsed }),
+            h('td', { text: r.rps === '' ? '—' : String(r.rps) }), h('td', { text: r.p50_ms === '' ? '—' : r.p50_ms + ' ms' }), h('td', { text: r.p95_ms === '' ? '—' : r.p95_ms + ' ms' }), h('td', { text: r.p99_ms === '' ? '—' : r.p99_ms + ' ms' }),
+            h('td', { text: r.error_rate === '' ? '—' : (r.error_rate * 100).toFixed(1) + '%' }),
+            h('td', {}, h('div', { class: 'row tight' }, [res ? h('button', { class: 'btn ghost small', type: 'button', text: '상세', onclick: function () { showDetail(x); } }) : null,
+              res ? h('button', { class: 'btn ghost small', type: 'button', text: getBaseline() === x.run_id ? '기준 해제' : '기준으로', title: '이 실행을 기준으로 고정하면 다른 실행을 기준 대비 %로 비교해요', onclick: function () { setBaseline(getBaseline() === x.run_id ? '' : x.run_id); drawTable(); drawCompare(); } }) : null, cancel]))]));
+        });
+        tableBox.appendChild(h('table', {}, [K.th(['', '모드 · 동시성 · 횟수/시간', '요청 크기', '실행 ID', '상태', '시작', '소요', '초당 요청', 'p50', 'p95', 'p99', '오류율', '']), body]));
+      }
     }
 
     async function load() {
@@ -161,31 +246,7 @@
       }));
       if (token !== K.token) return;
       var active = runs.some(isActive);
-      clear(tableBox);
-      if (!runs.length) tableBox.appendChild(h('div', { class: 'empty', text: '실행한 시험이 없어요' }));
-      else {
-        var body = h('tbody');
-        runs.forEach(function (x) {
-          var res = cache[x.run_id], r = row(x), canSel = !!res;
-          var cb = h('input', { type: 'checkbox', 'aria-label': '비교에 포함', onchange: function () { selected[x.run_id] = cb.checked; drawCompare(); } });
-          if (!canSel) cb.disabled = true; else cb.checked = !!selected[x.run_id];
-          var elapsed = r.elapsed_seconds !== '' ? K.fmtDur(r.elapsed_seconds) : ACTIVE[x.state] ? K.fmtDur((Date.now() - new Date(x.created_at)) / 1000) + ' 경과' : '—';
-          var cancel = (x.state === 'queued' || x.state === 'running') ? K.lock(h('button', { class: 'btn ghost small', type: 'button', text: '취소', onclick: async function () {
-            var ok = await K.confirm('시험을 취소할까요?', [K.runLabel(x) + ' 실행을 중단해요.'], '시험 취소', true);
-            if (!ok) return;
-            var d = await K.api('DELETE', '/api/jobs/' + encodeURIComponent(x.run_id));
-            if (!d.ok) { K.showMsg(formMsg, K.failMsg('취소 실패: ', d), 'bad'); return; }
-            load();
-          } })) : null;
-          body.appendChild(h('tr', {}, [h('td', {}, cb), h('td', { text: K.runLabel(x) }), h('td', { text: x.spec.payload_bytes + ' B' }), h('td', {}, h('small', { class: 'mono muted', title: x.run_id, text: x.run_id.slice(0, 8) })),
-            h('td', { text: K.STATE_KO[x.state] || x.state }), h('td', { text: K.fmtDate(x.created_at) }), h('td', { text: elapsed }),
-            h('td', { text: r.rps === '' ? '—' : String(r.rps) }), h('td', { text: r.p50_ms === '' ? '—' : r.p50_ms + ' ms' }), h('td', { text: r.p95_ms === '' ? '—' : r.p95_ms + ' ms' }), h('td', { text: r.p99_ms === '' ? '—' : r.p99_ms + ' ms' }),
-            h('td', { text: r.error_rate === '' ? '—' : (r.error_rate * 100).toFixed(1) + '%' }),
-            h('td', {}, h('div', { class: 'row tight' }, [res ? h('button', { class: 'btn ghost small', type: 'button', text: '상세', onclick: function () { showDetail(x); } }) : null, cancel]))]));
-        });
-        tableBox.appendChild(h('table', {}, [K.th(['', '모드 · 동시성 · 횟수/시간', '요청 크기', '실행 ID', '상태', '시작', '소요', '초당 요청', 'p50', 'p95', 'p99', '오류율', '']), body]));
-      }
-      drawCompare();
+      refreshFilters(); drawTable(); drawCompare();
       if (active && !pollId) pollId = K.addTimer(load, 3000);   // 실행 중이면 3초마다 다시 불러오고, 끝나면 멈춘다
       if (!active && pollId) { clearInterval(pollId); pollId = null; }
     }

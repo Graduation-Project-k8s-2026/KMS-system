@@ -27,6 +27,16 @@
 ### API 구조
 - [x] Transit / Admin 평면 분리 (TCP / 유닉스 소켓)
 - [x] 관리 API (admin.sock → HTTP 중계, 별도 프로세스)
+- [x] data key API (`POST /v1/datakey/{name}`) — 큰 데이터는 클라이언트에서 봉투 암호화
+- [x] 키 수명 주기 (사용 중지 → 삭제 예약 → 삭제, 보호 키) — ADR-012
+- [x] Transit 요청 비동기 감사, 오류 응답 `{error,message,hint}` 통일
+- [x] TLS 인증서 무중단 교체 (재시작·조각 입력 불필요) — ADR-015
+- [x] 외부(인터넷 공개) 리스너 `KMS_EXTERNAL_ADDR` — 요청자·키 네임스페이스 제한, IP별 요청 수 제한. **인증·인가가 완전하지 않으면 뜨지 않는다**(ADR-014, ADR-020)
+
+### 클라이언트·화면
+- [x] `kms` CLI(`cmd/kms`)와 큰 파일 형식 KMSF(`pkg/kmsfile`) — login / encrypt / decrypt / datakey. 설치: `install.sh`, 빌드: `scripts/build-cli.sh` (docs/usage.md)
+- [x] 관리 화면 v2 (`/v2/`): 키 상태·수명 주기, 감사(관리+Transit 합침), 성능 시험 기준 비교, 대시보드 시간 범위. 서버 없이 `scripts/preview-admin-ui.py`로 미리 보기 (ADR-017)
+- [x] 사용자 포털 — **tailnet 전용 시험 도구**. 파일 암호화 탭은 브라우저 안에서 암호화 (ADR-018)
 
 ### 접근 제어
 - [x] 인증 — ServiceAccount 토큰 로컬 JWT 서명 검증
@@ -79,6 +89,7 @@ Root Key (seal이 보호, 메모리에만 존재)
 ## 프로젝트 구조 (예정)
 cmd/server/            KMS 서버 실행 진입점 (main.go) — Transit(TCP)/Admin(유닉스 소켓)/Metrics(TCP) 세 리스너를 함께 기동
 cmd/admin-api/         관리 API 프로세스 실행 진입점 — HTTP로 받아 admin.sock으로 중계
+cmd/kms/               외부 사용자용 CLI (login/encrypt/decrypt/datakey) — pkg/kmsfile 사용
 cmd/bench/             성능 측정 CLI — Transit API에 부하를 걸어 처리량/지연 측정 (서버 코드 아님, 외부 HTTP 클라이언트)
 internal/crypto/       AES-GCM, 봉투암호화 로직
 internal/keys/         키 생성/조회/회전/버전 관리

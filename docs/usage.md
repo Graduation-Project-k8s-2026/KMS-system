@@ -258,6 +258,29 @@ kms version
 nonce는 청크마다 다르고 AAD에 헤더 해시·청크 번호·마지막 청크 여부가 들어가 순서 바꾸기·잘라내기·덧붙이기를 탐지한다.
 웹 포털의 "파일 암호화" 탭이 만든 파일도 같은 형식이라 CLI로 풀 수 있다.
 
+### 봉인 방식 이전 (서버의 관리 소켓에서만)
+
+TPM 전환과 조각 재발급(`POST /v1/sys/seal-migrate`)은 **관리 API 허용 목록에서 뺐고 관리 화면에도 버튼이 없다.** 이번 운영 적용은 init 기록 v1을 유지해야 이전 서버 이미지로
+되돌릴 수 있는데, 조각 재발급(`target=shamir`)도 기록을 v2로 올리기 때문이다. TPM 배포는 보류 중이라(ADR-010) `KMS_SEAL_ALLOWED=shamir`에서 `target=tpm`은 403 `seal_not_allowed`다.
+꼭 필요하면 서버에서 관리 소켓으로 직접 실행한다(이후 이전 이미지로 되돌릴 수 없음을 알고서):
+
+```bash
+sudo sh -c 'umask 077; curl -sS -o /dev/shm/seal-migrate.json -w "%{http_code}\n" --unix-socket /run/custom-kms/admin/admin.sock \
+  -X POST -H "Content-Type: application/json" -d "{\"target\":\"shamir\"}" http://localhost/v1/sys/seal-migrate'   # 응답의 새 조각을 한 번만 보관 후 shred -u
+```
+
+### 사용자 포털 (tailnet 전용 시험 도구)
+
+`scripts/deploy-user-portal.sh`로 배포하는 포털은 **Tailscale 8443을 통한 tailnet 전용 시험·시연 도구**다. 인터넷에 공개하지 않으며 사용자 토큰을 입력받지 않는다(포털 서버가 자기 서비스 계정으로 KMS를 부른다).
+"파일 암호화" 탭은 파일을 **브라우저 안에서** 암호화·복호화한다(원문은 서버로 가지 않고, 결과는 CLI와 호환되는 KMSF 파일). 외부 사용자는 포털이 아니라 CLI나 외부 리스너(위 "외부에서 사용하기")를 쓴다.
+
+### 관리 화면 미리보기 (서버 없이)
+
+```bash
+python3 scripts/preview-admin-ui.py            # http://127.0.0.1:8099/v2/ — 가짜 데이터, 키 상태 버튼은 메모리에서만 바뀐다
+python3 scripts/preview-admin-ui.py --role viewer --sealed
+```
+
 ### 오류 응답 형식
 
 모든 오류는 `{"error":"<기계용 코드>","message":"<사람용 설명>","hint":"<선택>"}` JSON이다(상태 코드는 그대로).

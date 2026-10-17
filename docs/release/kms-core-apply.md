@@ -52,9 +52,20 @@ sudo scripts/reissue-transit-cert.sh --ca-cert <내부 CA 인증서 경로> --ca
 # 확인: 마지막에 출력되는 SAN에 기존 항목(kms-transit 등, 127.0.0.1, 노드 IP)과 새 주소가 모두 있고 notAfter가 충분히 먼 미래
 ```
 
+   **CA 개인 키 확인**: 재발급에는 내부 CA 키(`private-pki/ca.key`, 운영 서버 사용자 폴더 아래)가 필요하다. 재발급을 끝낸 뒤 반드시 확인한다:
+   (1) 권한이 `0600`이고 소유자가 root인지(`sudo ls -l <private-pki 경로>/ca.key`; 아니면 `sudo chown root:root` + `sudo chmod 600`),
+   (2) **오프라인 보관**(운영 서버 밖의 안전한 매체)이 있는지, (3) 작업 중 만든 임시 복사본이나 셸 기록에 경로·내용이 남지 않았는지. CA 키는 사용자에게 보내지 않는다 — 사용자에게는 공개 인증서(`ca.crt`)만 준다.
    되돌리기: `$TLS_DIR/backup-<시각>/`의 `tls.crt`, `tls.key`를 같은 디렉터리로 복사(임시 이름 → `mv`).
    **주의: 사설망 클라이언트(Pod 등)가 쓰는 CA는 그대로**이므로 클라이언트 신뢰 설정은 바꿀 필요가 없다.
-4. 새 매니페스트 렌더 (static pod 외 구성용; 적용하지 않는다, 결과는 커밋하지 않는다):
+4. (외부 사용자에게 배포할 경우) **CLI 빌드** — 개발 PC에서(운영 서버가 아니어도 됨):
+
+```bash
+scripts/build-cli.sh                       # dist/ 에 kms-linux-amd64, kms-linux-arm64, kms-darwin-arm64, kms-windows-amd64.exe + SHA256SUMS
+cat dist/SHA256SUMS                        # 확인: 4개 파일 해시
+```
+
+   dist/는 git에 올리지 않는다. 배포 위치(`<배포 URL>`)에 올릴 때 바이너리와 `SHA256SUMS`를 함께 올리고, 사용자는 `KMS_CLI_URL=<배포 URL> ./install.sh`로 설치한다(체크섬 불일치면 설치 안 됨). 6단계 이후에 해도 된다.
+5. 새 매니페스트 렌더 (static pod 외 구성용; 적용하지 않는다, 결과는 커밋하지 않는다):
 
 ```bash
 OUT=/root/release-core-$(date -u +%Y%m%dT%H%MZ)
@@ -146,6 +157,9 @@ sar system:serviceaccount:kms-demo:app-a encrypt campus-shipping           # 확
 ## 4. 새 이미지·매니페스트 교체 → 재시작 (여기서 봉인됨)
 
 1. 보조 구성 요소부터(KMS 무관): 외부 사용자 네임스페이스, 렌더된 RBAC, 변경된 이미지의 Deployment를 적용한다.
+   **관리 API(`kms-admin`)와 시연 앱(`kms-demo-app`) 이미지도 여기서 교체**한다 — 새 관리 화면(키 수명 주기·감사 합쳐 보기·성능 기준 비교)과 포털의 파일 암호화 탭이 이 이미지에 들어 있다.
+   `admin-deployment.yaml`은 Transit 감사 디렉터리를 읽기 전용으로 마운트하므로(0단계 2의 호스트 디렉터리가 있어야 Pod가 뜬다) KMS 재시작 전에 적용해도 된다. KMS가 아직 옛 버전이어도 새 화면은
+   동작하지만, 키 수명 주기 버튼은 KMS 재시작(새 서버) 뒤에야 성공한다(그 전에는 404).
 
 ```bash
 K="sudo kubectl --kubeconfig=/etc/kubernetes/admin.conf"
@@ -254,6 +268,13 @@ curl -sk -X POST https://<Transit 주소>/v1/encrypt/demo -d '{}' -H 'content-ty
 # 확인: {"error":"unauthorized","message":"authentication required","hint":"..."}  — 상태 401
 ```
 
+**5-4b. 새 관리 화면·포털 확인** (브라우저)
+
+- 관리 화면(`/v2/`) 키 상세에 상태 배지와 **키 수명 주기** 패널(관리자 계정에만)이 보이는지, `k8s-secrets`는 사용 중지·삭제 예약 버튼이 비활성(이유 표시)인지.
+- 봉인 화면에 'TPM 배포 보류' 안내만 있고 봉인 방식 전환/조각 재발급 버튼이 없는지. 감사 화면에서 Transit 기록(키 이름·경로 필터)이 보이는지(5-3 이후).
+- 포털의 '파일 암호화' 탭: 작은 파일을 암호화(.kmsf 내려받기) → 복호화로 원본과 같은지. 개발자 도구 네트워크 탭에서 **파일 본문이 서버로 전송되지 않는지**(`/datakey`는 키 이름만 보낸다).
+- 포털에서 권한 없는 키(campus-shipping)를 쓰면 안내 문구가 '(현재 app-a 권한)'을 포함한 403인지(상단에 상시 문구는 없음).
+
 **5-5. 키 삭제 API 스모크 (시험용 키, 곧바로 정리하지 않아도 됨)**
 
 ```bash
@@ -353,6 +374,7 @@ sudo grep '"listener":"external"' /var/lib/custom-kms/transit-audit/$(date -u +%
 
 - 기존 네임스페이스 Role/RoleBinding(전역 키용)은 새 규칙에서 효력이 없다. **지우지 않고 둔다**(되돌리기 대비). 정리는 별도 판단.
 - 2단계 표를 다시 뽑아 "사라짐"이 모두 "이전됨"으로 바뀌었는지 확인: `kubectl get ... -o json > /root/rbac-after.json && python3 scripts/migrate-rbac-cb.py check --input /root/rbac-after.json`.
+- 외부 리스너가 떠 있는지: KMS 기동 로그에 `external listener enabled on ...`이 있고 `external listener NOT started`가 없어야 한다(인증·인가 설정이 어긋나면 안전하게 뜨지 않는다, ADR-020).
 - 외부 토큰은 수명이 짧을수록 좋다(유출 시 개별 회수 불가). 필요한 때만 발급한다.
 
 ## 되돌리기 (이전 서버 이미지로)

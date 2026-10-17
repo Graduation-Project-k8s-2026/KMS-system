@@ -95,7 +95,7 @@ func TestErrorBodies_413(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := wantError(t, resp, 413, "payload_too_large")
-	if body["limit_bytes"] != float64(2<<20) || body["hint"] != "split the payload or encrypt it client-side with envelope encryption" {
+	if body["limit_bytes"] != float64(2<<20) || body["hint"] != "use the datakey API (POST /v1/datakey/{name}) and encrypt client-side" {
 		t.Fatalf("413 body = %v", body)
 	}
 	for _, v := range body {

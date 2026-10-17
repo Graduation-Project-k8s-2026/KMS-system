@@ -119,3 +119,10 @@ func TestTransitAudit_RecordsDenialsWithoutBlockingRequests(t *testing.T) {
 		t.Fatal("body leaked")
 	}
 }
+
+func decodeRaw(t *testing.T, resp *http.Response) map[string]any {
+	t.Helper()
+	var m map[string]any
+	decodeJSON(t, resp, &m)
+	return m
+}

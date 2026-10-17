@@ -4,7 +4,9 @@ package transit
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -95,6 +97,7 @@ func NewRouter(deps Deps) http.Handler {
 		r.With(metrics.InstrumentTransit("encrypt"), auditMiddleware(deps.Audit, "encrypt"), authzMiddleware(deps.Authorizer, "encrypt")).Post("/v1/encrypt/{name}", handleEncrypt(deps))
 		r.With(metrics.InstrumentTransit("decrypt"), auditMiddleware(deps.Audit, "decrypt"), authzMiddleware(deps.Authorizer, "decrypt")).Post("/v1/decrypt/{name}", handleDecrypt(deps))
 		r.With(metrics.InstrumentTransit("rewrap"), auditMiddleware(deps.Audit, "rewrap"), authzMiddleware(deps.Authorizer, "rewrap")).Post("/v1/rewrap/{name}", handleRewrap(deps))
+		r.With(metrics.InstrumentTransit("datakey"), auditMiddleware(deps.Audit, "datakey"), authzMiddleware(deps.Authorizer, "datakey")).Post("/v1/datakey/{name}", handleDataKey(deps))
 	})
 
 	return r
@@ -245,5 +248,56 @@ func handleRewrap(deps Deps) http.HandlerFunc {
 		}
 		metrics.TransitPayloadBytes.WithLabelValues("rewrap").Observe(float64(len(newCiphertext)))
 		httputil.WriteJSON(w, http.StatusOK, rewrapResponse{Ciphertext: newCiphertext})
+	}
+}
+
+// ---- /v1/datakey ----
+
+type dataKeyRequest struct {
+	Bits      int   `json:"bits"`      // 128 | 256 (기본 256)
+	Plaintext *bool `json:"plaintext"` // false면 암호문만 (기본 true)
+}
+
+type dataKeyResponse struct {
+	Ciphertext string `json:"ciphertext"`
+	Plaintext  string `json:"plaintext,omitempty"` // base64. plaintext=false면 생략
+	KeyVersion int    `json:"key_version"`
+}
+
+// handleDataKey는 1회용 데이터 키를 만들어 암호문(과 선택적으로 평문)을 돌려준다. 호출자는 평문 키로 자기
+// 데이터를 클라이언트에서 암호화(봉투 암호화)하고 평문 키를 버린 뒤 암호문 키만 저장한다. 나중에 같은
+// 키의 POST /v1/decrypt/{name}(verb decrypt)로 평문 키를 되찾는다. 평문 키는 로그·감사·지표 어디에도
+// 남기지 않는다 (감사 이벤트에는 본문 필드 자체가 없고, 지표에는 길이만 센다).
+func handleDataKey(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		name := chi.URLParam(r, "name")
+
+		var req dataKeyRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			badRequest(w, "invalid request body", "")
+			return
+		}
+		bits := req.Bits
+		if bits == 0 {
+			bits = 256
+		}
+		wantPlain := req.Plaintext == nil || *req.Plaintext
+
+		ciphertext, plain, version, err := deps.Transit.DataKey(name, bits)
+		if err != nil {
+			fail(w, r, err, http.StatusInternalServerError)
+			return
+		}
+		defer func() {
+			for i := range plain {
+				plain[i] = 0
+			}
+		}()
+		resp := dataKeyResponse{Ciphertext: ciphertext, KeyVersion: version}
+		if wantPlain {
+			resp.Plaintext = base64.StdEncoding.EncodeToString(plain)
+		}
+		metrics.TransitPayloadBytes.WithLabelValues("datakey").Observe(float64(len(plain)))
+		httputil.WriteJSON(w, http.StatusOK, resp)
 	}
 }

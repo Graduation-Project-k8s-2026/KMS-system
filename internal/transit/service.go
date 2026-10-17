@@ -1,6 +1,7 @@
 package transit
 
 import (
+	"crypto/rand"
 	"fmt"
 
 	kmscrypto "github.com/Graduation-Project-k8s-2026/KMS-system/internal/crypto"
@@ -44,6 +45,32 @@ func (s *TransitService) Encrypt(name string, plaintext []byte) (string, error) 
 	}
 
 	return EncodeCiphertext(version, envelope), nil
+}
+
+// DataKey는 1회용 데이터 키를 새로 만들고, 그 키 바이트를 Encrypt와 완전히 같은 경로(같은 키 링의 최신
+// 버전, 같은 AAD 규칙, 같은 "kms:v{n}:" 형식)로 암호화한다 (AWS GenerateDataKey와 같은 모델).
+// 그래서 나중에 Decrypt(name, ciphertext)로 평문 키를 되찾을 수 있다. 평문 키는 호출자에게만 돌려주며
+// 호출자가 쓰고 나서 0으로 지워야 한다. bits는 128 또는 256. 반환 version은 암호화에 쓴 키 버전이다.
+func (s *TransitService) DataKey(name string, bits int) (ciphertext string, plaintext []byte, version int, err error) {
+	if bits != 128 && bits != 256 {
+		return "", nil, 0, &keys.KeyPolicyError{Msg: "bits must be 128 or 256", Code: "invalid_request", Public: "bits must be 128 or 256"}
+	}
+	version, kek, err := s.keys.GetEncryptionKEK(name)
+	if err != nil {
+		return "", nil, 0, err
+	}
+	defer zeroBytes(kek)
+
+	plaintext = make([]byte, bits/8)
+	if _, err := rand.Read(plaintext); err != nil {
+		return "", nil, 0, err
+	}
+	envelope, err := kmscrypto.Seal(kek, plaintext, aad(name, version))
+	if err != nil {
+		zeroBytes(plaintext)
+		return "", nil, 0, err
+	}
+	return EncodeCiphertext(version, envelope), plaintext, version, nil
 }
 
 // Decrypt는 ciphertext에서 버전을 읽어 그 버전의 KEK를 확보하고, 봉투를 열어

@@ -38,8 +38,8 @@ func Limit(h http.Handler) http.Handler {
 			}
 			if len(b) > bodyLimit {
 				// 다운로드 주소 같은 외부 링크는 넣지 않는다 (힌트는 사용 방법만).
-				// TODO: data key API / kms CLI가 생기면(2·3단계) 힌트를 그쪽 안내로 다시 바꾼다.
-				writeLimitError(w, 413, fmt.Sprintf(`{"error":"payload_too_large","message":"request body exceeds the limit","limit_bytes":%d,"hint":"split the payload or encrypt it client-side with envelope encryption"}`, bodyLimit))
+				// data key API(POST /v1/datakey/{name})로 받은 키로 클라이언트에서 암호화하도록 안내한다.
+				writeLimitError(w, 413, fmt.Sprintf(`{"error":"payload_too_large","message":"request body exceeds the limit","limit_bytes":%d,"hint":"use the datakey API (POST /v1/datakey/{name}) and encrypt client-side"}`, bodyLimit))
 				return
 			}
 			r.Body = io.NopCloser(strings.NewReader(string(b)))

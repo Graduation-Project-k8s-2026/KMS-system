@@ -489,6 +489,9 @@ func handleSealMigrate(deps Deps) http.HandlerFunc {
 				httputil.WriteJSONError(w, http.StatusBadRequest, `target must be "shamir" or "tpm"`)
 			case errors.Is(err, barrier.ErrSealed), errors.Is(err, barrier.ErrSealAlreadyTarget), errors.Is(err, seal.ErrTPMAlreadyInitialized):
 				httputil.WriteJSONError(w, http.StatusConflict, err.Error())
+			case errors.Is(err, seal.ErrTPMNotAllowed):
+				// 정책(KMS_SEAL_ALLOWED)상 허용되지 않은 방식: 장치 문제(503)가 아니라 거부(403). 아무것도 바뀌지 않았다.
+				httputil.WriteAPIError(w, http.StatusForbidden, "seal_not_allowed", "this seal method is not allowed on this server", "see KMS_SEAL_ALLOWED")
 			case errors.Is(err, seal.ErrTPMUnavailable):
 				httputil.WriteJSONError(w, http.StatusServiceUnavailable, err.Error())
 			case errors.Is(err, barrier.ErrRootVerification), errors.Is(err, barrier.ErrSealModeMismatch):

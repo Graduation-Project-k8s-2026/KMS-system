@@ -608,3 +608,31 @@ func TestSealProfileOnAdminFollowsMode(t *testing.T) {
 		t.Fatalf("tpm profile = %v", pr)
 	}
 }
+
+// KMS_SEAL_ALLOWED=shamir (TPM 열기 함수 없음)인 서버에서 target=tpm은 403으로 거부되고 아무것도 바뀌지 않는다.
+func TestSealMigrate_TPMNotAllowed_Rejected403NothingChanges(t *testing.T) {
+	store := storage.NewMemoryStorage()
+	sw := seal.NewSwitch("shamir", seal.NewShamirSeal(3), nil, nil, store) // main.go: tpm 불허 → open == nil
+	b := barrier.NewBarrier(store, sw)
+	km := keys.NewKeyManager(b)
+	srv := httptest.NewServer(apiadmin.NewRouter(apiadmin.Deps{Barrier: b, Keys: km, Seal: sw, ShamirParts: 5, ShamirThreshold: 3}))
+	t.Cleanup(srv.Close)
+	p := &proc{t: t, srv: srv, b: b, sw: sw, km: km}
+	p.initAndUnseal()
+	before, _ := store.Get(initPathKey)
+
+	code, out := p.post("/v1/sys/seal-migrate", map[string]string{"target": "tpm"})
+	if code != 403 || out["error"] != "seal_not_allowed" {
+		t.Fatalf("got %d %v, want 403 seal_not_allowed", code, out)
+	}
+	if _, leaked := out["shares"]; leaked {
+		t.Fatal("shares returned")
+	}
+	after, _ := store.Get(initPathKey)
+	if string(before) != string(after) || hasBlob(t, store) || sw.Mode() != "shamir" {
+		t.Fatal("state changed by a rejected migration")
+	}
+	if code, _ := p.post("/v1/sys/seal-migrate", map[string]string{"target": "shamir"}); code != 200 {
+		t.Fatalf("shamir reissue should still work: %d", code)
+	}
+}

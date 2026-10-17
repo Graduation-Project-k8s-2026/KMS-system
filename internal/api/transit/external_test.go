@@ -1,6 +1,7 @@
 package transit_test
 
 import (
+	"crypto/rsa"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -24,7 +25,9 @@ import (
 
 var extCfg = apitransit.ExternalConfig{SubjectNamespaces: []string{"kms-external"}, KeyNamespaces: []string{"kms-external"}, RPS: 1000, Burst: 1000, AuthFailMax: 100}
 
-// extEnv: 외부 라우터. 요청자 신원은 테스트 헤더(X-Test-NS)로 주입한다 (authn 미들웨어 대용).
+// extEnv: 외부 라우터. 요청자 신원은 실제 토큰 검증(authn)을 거친다 — 테스트 헤더 X-Test-NS를 받아 그 네임스페이스의
+// ServiceAccount 토큰을 서명해 Authorization으로 바꿔 준다. verifier를 직접 넘기면(인증 실패 시험) 변환하지 않는다.
+// (외부 라우터는 Verifier/Authorizer가 없으면 503으로 닫히므로 둘 다 필요하다.)
 func extEnv(t *testing.T, authorizer *authz.Authorizer, cfg apitransit.ExternalConfig, verifier *authn.Verifier) (*httptest.Server, *keys.KeyManager, *audit.TransitLog, string) {
 	t.Helper()
 	b := barrier.NewBarrier(storage.NewMemoryStorage(), seal.NewDevSeal("p"))
@@ -34,10 +37,15 @@ func extEnv(t *testing.T, authorizer *authz.Authorizer, cfg apitransit.ExternalC
 	km := keys.NewKeyManager(b)
 	dir := t.TempDir()
 	alog, _ := audit.NewTransit(dir, 256, 20*time.Millisecond)
+	var priv *rsa.PrivateKey
+	autoSign := verifier == nil
+	if autoSign {
+		verifier, priv = newAuthTestVerifier(t)
+	}
 	router := apitransit.NewExternalRouter(apitransit.Deps{Barrier: b, Transit: kmstransit.NewTransitService(km), Authorizer: authorizer, Audit: alog, Verifier: verifier}, cfg)
 	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if ns := r.Header.Get("X-Test-NS"); ns != "" && verifier == nil {
-			r = r.WithContext(authn.WithIdentity(r.Context(), authn.Identity{Namespace: ns, ServiceAccount: "u", Subject: "system:serviceaccount:" + ns + ":u"}))
+		if ns := r.Header.Get("X-Test-NS"); ns != "" && autoSign && r.Header.Get("Authorization") == "" {
+			r.Header.Set("Authorization", "Bearer "+signTestToken(t, priv, ns, "u"))
 		}
 		router.ServeHTTP(w, r)
 	})
@@ -173,7 +181,7 @@ func TestExternal_AuthFailuresBlockIP(t *testing.T) {
 func TestExternal_AuditHasListenerAndClientIPNoSecrets(t *testing.T) {
 	srv, km, alog, dir := extEnv(t, newFakeAuthorizer(t, true), extCfg, nil)
 	km.CreateKey("kms-external.k", 0)
-	extPost(t, srv, "/v1/encrypt/kms-external.k", "kms-external", map[string]string{"Authorization": "Bearer SECRET-TOKEN-FIXTURE", "X-Forwarded-For": "198.51.100.7"}).Body.Close()
+	extPost(t, srv, "/v1/encrypt/kms-external.k", "kms-external", map[string]string{"X-Forwarded-For": "198.51.100.7"}).Body.Close()
 	extPost(t, srv, "/v1/encrypt/kms-external.k", "kube-system", nil).Body.Close() // 내부 SA의 외부 사용 시도도 기록
 	alog.Close()
 	evs, _ := audit.ReadTransitToday(dir)
@@ -187,5 +195,36 @@ func TestExternal_AuditHasListenerAndClientIPNoSecrets(t *testing.T) {
 	}
 	if evs[0].Status != 200 || evs[1].Status != 403 {
 		t.Fatalf("statuses = %d %d", evs[0].Status, evs[1].Status)
+	}
+}
+
+// §0 fail-closed: Verifier 또는 Authorizer가 없으면 외부 라우터는 모든 요청을 503으로 거부한다.
+func TestExternal_NilVerifierOrAuthorizerRejectsEverythingWith503(t *testing.T) {
+	b := barrier.NewBarrier(storage.NewMemoryStorage(), seal.NewDevSeal("p"))
+	b.Unseal()
+	km := keys.NewKeyManager(b)
+	km.CreateKey("kms-external.k", 0)
+	verifier, priv := newAuthTestVerifier(t)
+	cases := map[string]apitransit.Deps{
+		"authn off": {Barrier: b, Transit: kmstransit.NewTransitService(km), Authorizer: newFakeAuthorizer(t, true)},
+		"authz off": {Barrier: b, Transit: kmstransit.NewTransitService(km), Verifier: verifier},
+		"both off":  {Barrier: b, Transit: kmstransit.NewTransitService(km)},
+	}
+	for name, deps := range cases {
+		srv := httptest.NewServer(apitransit.NewExternalRouter(deps, extCfg))
+		for _, path := range []string{"/v1/encrypt/kms-external.k", "/v1/datakey/kms-external.k"} {
+			req, _ := http.NewRequest("POST", srv.URL+path, strings.NewReader(`{"plaintext":"AA=="}`))
+			req.Header.Set("Authorization", "Bearer "+signTestToken(t, priv, "kms-external", "u")) // 유효한 토큰이어도
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantError(t, resp, 503, "unavailable")
+		}
+		r, _ := http.Get(srv.URL + "/healthz")
+		if r.StatusCode != 503 {
+			t.Fatalf("%s: healthz = %d, want 503", name, r.StatusCode)
+		}
+		srv.Close()
 	}
 }

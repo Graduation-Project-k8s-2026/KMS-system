@@ -44,7 +44,15 @@ func contains(list []string, s string) bool {
 //   - 키 네임스페이스 제한: 외부 사용자가 내부 키 이름을 두드려 보는 것을 SAR 이전에 막는다. 존재 여부를 드러내지
 //     않도록 일반 403(forbidden)만 돌려준다.
 //   - 요청 수 제한 + 인증 실패 차단: 공개 포트에 대한 무차별 대입·폭주를 줄인다.
+//
+// fail-closed(이중 방어): 인증(Verifier)이나 인가(Authorizer)가 없으면 이 리스너는 인터넷에 열린 채 토큰 검사나 SAR 없이
+// 동작하게 된다. main이 그런 설정에서는 리스너를 아예 띄우지 않지만, 혹시 여기까지 오더라도 모든 요청을 503으로 거부한다.
 func NewExternalRouter(deps Deps, cfg ExternalConfig) http.Handler {
+	if deps.Verifier == nil || deps.Authorizer == nil {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			httputil.WriteAPIError(w, http.StatusServiceUnavailable, "unavailable", "external listener is disabled: authentication and authorization are required", "")
+		})
+	}
 	guard := newIPGuard(cfg.RPS, cfg.Burst, cfg.AuthFailMax)
 	metrics.SetExternalBlockedSource(guard.blocked)
 	return newExternalRouter(deps, cfg, guard)

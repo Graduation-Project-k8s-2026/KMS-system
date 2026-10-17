@@ -358,7 +358,11 @@ func main() {
 	// 외부(인터넷 공개) 리스너: KMS_EXTERNAL_ADDR이 비어 있으면 꺼진다. Transit과 같은 인증서(재로딩 포함)를 쓰고,
 	// 암복호화 4개 경로와 /healthz만 연다. 방어선(요청자·키 네임스페이스 제한, IP별 요청 수 제한·인증 실패 차단)은
 	// transit.NewExternalRouter 주석 참고. hostNetwork 파드라 별도 Service 없이 노드 주소로 바로 받는다.
-	if extAddr := os.Getenv("KMS_EXTERNAL_ADDR"); extAddr != "" {
+	extAddr := os.Getenv("KMS_EXTERNAL_ADDR")
+	if reason := externalDisabledReason(extAddr, verifier != nil, authorizer != nil, os.Getenv("KMS_AUTHZ_FAIL_OPEN") == "true"); reason != "" {
+		// fail-closed: 인증·인가가 완전하지 않으면 인터넷 공개 포트를 열지 않는다. 서버 전체와 내부 리스너는 정상 기동한다.
+		log.Printf("external listener NOT started: %s", reason)
+	} else if extAddr != "" {
 		extListener, err := net.Listen("tcp", extAddr)
 		if err != nil {
 			log.Fatalf("failed to listen on external address %q: %v", extAddr, err)
@@ -625,6 +629,22 @@ func parseAllowedSeals(v string) (map[string]bool, error) {
 		return nil, errors.New("KMS_SEAL_ALLOWED must list at least one of shamir, tpm")
 	}
 	return out, nil
+}
+
+// externalDisabledReason은 외부 리스너를 띄우면 안 되는 이유를 돌려준다 (""이면 괜찮음 또는 애초에 꺼져 있음).
+// 외부 리스너는 인터넷에 공개되므로 토큰 검증(authn), 인가(authz), 그리고 SAR 실패 시 거부(fail-closed)가 모두 필요하다.
+func externalDisabledReason(addr string, hasVerifier, hasAuthorizer, failOpen bool) string {
+	switch {
+	case addr == "":
+		return ""
+	case !hasVerifier:
+		return "KMS_AUTHN is off (no token verification)"
+	case !hasAuthorizer:
+		return "KMS_AUTHZ is off (no authorization)"
+	case failOpen:
+		return "KMS_AUTHZ_FAIL_OPEN=true (authorization would fail open)"
+	}
+	return ""
 }
 
 // splitCSV는 쉼표 목록을 공백 제거 후 빈 항목 없이 나눈다.

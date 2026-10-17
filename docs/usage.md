@@ -224,6 +224,40 @@ curl --cacert ca.crt -H "Authorization: Bearer $TOKEN" -H 'content-type: applica
 외부에서는 `encrypt|decrypt|rewrap|datakey`만 되고 키 이름은 `kms-external.<이름>`이어야 한다(그 외는 모두 같은 403). 요청이 너무 많으면
 `429 rate_limited`(`Retry-After` 헤더), 잘못된 토큰을 반복하면 5분간 차단된다. 내부 ServiceAccount 토큰은 외부에서 403이다.
 
+### CLI (`kms`) — 외부 사용자용
+
+외부 사용자는 `curl` 대신 CLI로 쓸 수 있다. 큰 파일은 자동으로 data key 방식(KMSF 파일 형식)으로 암호화한다.
+
+1. **CA 인증서 받기**: 관리자에게 내부 CA의 *공개* 인증서(PEM 파일)를 받아 `ca.crt`로 저장한다. (CA 키는 받지 않는다.)
+2. **설치**: 관리자가 알려 준 배포 주소로 `KMS_CLI_URL=<배포 URL> ./install.sh` (체크섬 검증 후 `~/.local/bin/kms`에 설치, [y/N] 확인).
+   직접 빌드하려면 `scripts/build-cli.sh` → `dist/`.
+3. **login**: 서버 주소와 CA를 기억시킨다 (`~/.config/kms/config.json`, 권한 0600). 토큰은 **기본적으로 저장하지 않는다.**
+
+```bash
+kms login --addr https://<공인 주소>:9443 --ca ca.crt --token-file ~/kms.token   # 토큰 파일 '경로'만 기억 (또는 환경변수 KMS_TOKEN)
+export KMS_TOKEN=$(cat ~/kms.token)                                              # 파일 대신 환경변수를 써도 된다
+kms login ... --token-stdin --save-token                                          # 설정 파일(0600)에 토큰까지 저장하려면 명시해야 한다
+```
+
+4. **암호화·복호화**
+
+```bash
+echo -n 'hello' | kms encrypt kms-external.orders                    # → kms:v1:... (1MiB 이하는 Transit encrypt)
+kms decrypt kms-external.orders -i secret.txt.kms -o secret.txt      # kms:v.. 문자열은 키 이름이 필요하다
+kms encrypt kms-external.orders -i backup.tar -o backup.tar.kmsf     # 1MiB 초과는 자동으로 datakey + KMSF 파일
+kms decrypt -i backup.tar.kmsf -o backup.tar                         # KMSF 파일은 키 이름이 헤더에 있다 (형식은 앞 4바이트로 판별)
+kms encrypt k --mode file ...                                        # --mode transit|file 로 강제
+kms datakey kms-external.orders [--no-plaintext]                     # data key를 직접 받기
+kms version
+```
+
+복호화에 실패한 결과(변조·잘림)는 출력 파일을 남기지 않는다. 오류는 서버의 `{error,message,hint}`를 한국어 안내로 보여 주고,
+429이면 `Retry-After`를 보고 재시도 시간을 알려 준다. 토큰·평문은 오류 메시지에 나오지 않는다.
+
+**KMSF 파일 형식**(`pkg/kmsfile`): 헤더(`KMSF`, 버전, 키 이름, data key 암호문, 청크 크기, 기본 nonce) + 64KiB 청크별 AES-256-GCM.
+nonce는 청크마다 다르고 AAD에 헤더 해시·청크 번호·마지막 청크 여부가 들어가 순서 바꾸기·잘라내기·덧붙이기를 탐지한다.
+웹 포털의 "파일 암호화" 탭이 만든 파일도 같은 형식이라 CLI로 풀 수 있다.
+
 ### 오류 응답 형식
 
 모든 오류는 `{"error":"<기계용 코드>","message":"<사람용 설명>","hint":"<선택>"}` JSON이다(상태 코드는 그대로).

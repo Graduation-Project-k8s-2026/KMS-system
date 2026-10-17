@@ -45,6 +45,10 @@ type TransitEvent struct {
 	LatencyMs    float64   `json:"latency_ms"`
 	// Detail: 거부 사유 같은 내부 설명(키 버전 숫자 등 응답에는 숨기는 정보). 본문/비밀값은 넣지 않는다.
 	Detail string `json:"detail,omitempty"`
+	// Listener/ClientIP: 외부(인터넷) 리스너 요청에만 채운다. ClientIP는 TCP 연결의 RemoteAddr(X-Forwarded-For는
+	// 신뢰하지 않음)다. 내부 Transit 리스너의 기록에는 생략된다.
+	Listener string `json:"listener,omitempty"`
+	ClientIP string `json:"client_ip,omitempty"`
 }
 
 // TransitLog는 비동기 Transit 감사 기록기다.

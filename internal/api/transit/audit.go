@@ -39,6 +39,11 @@ func (w *statusWriter) WriteHeader(code int) {
 // (인증 실패 401은 주체가 없어 여기 오지 못한다 — kms_transit_requests_total 지표로 센다.)
 // 요청 본문·토큰은 읽지도 저장하지도 않는다.
 func auditMiddleware(l *audit.TransitLog, op string) func(http.Handler) http.Handler {
+	return auditMiddlewareFor(l, op, "")
+}
+
+// auditMiddlewareFor: listener가 "external"이면 리스너 이름과 클라이언트 IP도 함께 남긴다.
+func auditMiddlewareFor(l *audit.TransitLog, op, listener string) func(http.Handler) http.Handler {
 	if l == nil {
 		return func(next http.Handler) http.Handler { return next }
 	}
@@ -54,6 +59,9 @@ func auditMiddleware(l *audit.TransitLog, op string) func(http.Handler) http.Han
 			var rid [8]byte
 			_, _ = rand.Read(rid[:])
 			ev := &audit.TransitEvent{RequestID: hex.EncodeToString(rid[:]), Subject: subject, Action: op, Key: key, SARNamespace: ns}
+			if listener != "" {
+				ev.Listener, ev.ClientIP = listener, clientIP(r)
+			}
 			sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 			sw.Header().Set("X-Request-ID", ev.RequestID)
 			next.ServeHTTP(sw, r.WithContext(context.WithValue(r.Context(), auditCtxKey{}, ev)))

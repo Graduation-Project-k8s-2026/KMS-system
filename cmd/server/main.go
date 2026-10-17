@@ -259,14 +259,16 @@ func main() {
 		log.Fatalf("KMS_AUTHZ=on but building the authorizer failed: %v", err)
 	}
 
-	transitRouter := transit.NewRouter(transit.Deps{
+	transitDeps := transit.Deps{
 		ReservedKey: v2Name,
 		Barrier:     b,
 		Transit:     ts,
 		Seal:        sealer,
 		Verifier:    verifier,
 		Authorizer:  authorizer,
-	})
+		Audit:       transitAudit, // KMS_TRANSIT_AUDIT_DIR이 비어 있으면 nil(감사 꺼짐)
+	}
+	transitRouter := transit.NewRouter(transitDeps)
 	onUnseal := func() error {
 		_, err := km.GetKeyMeta(v2Name)
 		if errors.Is(err, &keys.KeyNotFoundError{}) {
@@ -351,6 +353,25 @@ func main() {
 	servers := []namedServer{
 		{"transit", security.Server("", metrics.AllHTTP(transitRouter)), transitListener},
 		{"admin", adminHTTP, adminListener},
+	}
+
+	// 외부(인터넷 공개) 리스너: KMS_EXTERNAL_ADDR이 비어 있으면 꺼진다. Transit과 같은 인증서(재로딩 포함)를 쓰고,
+	// 암복호화 4개 경로와 /healthz만 연다. 방어선(요청자·키 네임스페이스 제한, IP별 요청 수 제한·인증 실패 차단)은
+	// transit.NewExternalRouter 주석 참고. hostNetwork 파드라 별도 Service 없이 노드 주소로 바로 받는다.
+	if extAddr := os.Getenv("KMS_EXTERNAL_ADDR"); extAddr != "" {
+		extListener, err := net.Listen("tcp", extAddr)
+		if err != nil {
+			log.Fatalf("failed to listen on external address %q: %v", extAddr, err)
+		}
+		extRouter := transit.NewExternalRouter(transitDeps, transit.ExternalConfig{
+			SubjectNamespaces: splitCSV(getenvDefault("KMS_EXTERNAL_SUBJECT_NAMESPACES", "kms-external")),
+			KeyNamespaces:     splitCSV(getenvDefault("KMS_EXTERNAL_KEY_NAMESPACES", "kms-external")),
+			RPS:               float64(getenvIntDefault("KMS_EXTERNAL_RPS", 20)),
+			Burst:             getenvIntDefault("KMS_EXTERNAL_BURST", 40),
+			AuthFailMax:       getenvIntDefault("KMS_EXTERNAL_AUTHFAIL_MAX", 10),
+		})
+		servers = append(servers, namedServer{"external", security.Server("", extRouter), tls.NewListener(extListener, tlsReload.Config())})
+		log.Printf("external listener enabled on %s", extAddr)
 	}
 
 	metricsStatus := "disabled (KMS_METRICS_ADDR=\"\")"
@@ -604,6 +625,17 @@ func parseAllowedSeals(v string) (map[string]bool, error) {
 		return nil, errors.New("KMS_SEAL_ALLOWED must list at least one of shamir, tpm")
 	}
 	return out, nil
+}
+
+// splitCSV는 쉼표 목록을 공백 제거 후 빈 항목 없이 나눈다.
+func splitCSV(v string) []string {
+	var out []string
+	for _, f := range strings.Split(v, ",") {
+		if f = strings.TrimSpace(f); f != "" {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 func getenvDefault(key, fallback string) string {

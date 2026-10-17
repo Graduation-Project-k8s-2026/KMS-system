@@ -117,7 +117,7 @@ func TestReadTransitToday_RoundTripAndFields(t *testing.T) {
 	json.Unmarshal(b, &m)
 	for k := range m {
 		switch k {
-		case "utc", "request_id", "subject", "action", "key", "sar_namespace", "status", "latency_ms", "detail":
+		case "utc", "request_id", "subject", "action", "key", "sar_namespace", "status", "latency_ms", "detail", "listener", "client_ip":
 		default:
 			t.Fatalf("unexpected audit field %q", k)
 		}

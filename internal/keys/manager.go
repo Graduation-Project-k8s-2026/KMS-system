@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,8 +19,34 @@ const keysPrefix = "keys/"
 var ErrBackend = errors.New("key backend unavailable")
 var ErrAlreadyExists = errors.New("key already exists")
 
-// keyNameRE: 허용하는 키 이름 형식.
+// keyNameRE: 허용하는 키 이름 형식 (점 없는 전역 키).
 var keyNameRE = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
+
+// dns1123LabelRE: 네임스페이스 소유 키의 <ns> 부분. 쿠버네티스 네임스페이스 이름 규칙(DNS-1123 label).
+var dns1123LabelRE = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`)
+
+// ParseName은 키 이름을 소유 네임스페이스와 나머지로 나눈다 (C+B 키 소유 모델, ADR-009).
+//   - "payment"           -> ns "",       base "payment"  (클러스터 전역 키)
+//   - "team-a.payment"    -> ns "team-a", base "payment"  (team-a 소유 키)
+//
+// 점은 최대 1개, <ns>는 DNS-1123 label, base는 기존 키 이름 규칙(영문/숫자/_/-)이다.
+// 전체 길이는 기존과 같은 64자 이하(점 포함)다. 형식이 틀리면 KeyPolicyError.
+func ParseName(name string) (ns, base string, err error) {
+	if len(name) > 64 {
+		return "", "", &KeyPolicyError{Msg: "invalid key name: too long"}
+	}
+	if i := strings.IndexByte(name, '.'); i >= 0 {
+		ns, base = name[:i], name[i+1:]
+		if !dns1123LabelRE.MatchString(ns) || !keyNameRE.MatchString(base) {
+			return "", "", &KeyPolicyError{Msg: "invalid key name: want <namespace>.<name> with a DNS-1123 namespace and at most one dot"}
+		}
+		return ns, base, nil
+	}
+	if !keyNameRE.MatchString(name) {
+		return "", "", &KeyPolicyError{Msg: fmt.Sprintf("invalid key name %q: must match %s", name, keyNameRE.String())}
+	}
+	return "", name, nil
+}
 
 // KeyNotFoundError: 존재하지 않는 키를 조회/조작하려 했을 때 반환한다.
 type KeyNotFoundError struct {
@@ -83,10 +110,8 @@ func storageKey(name string) string {
 
 // validateKeyName은 이름이 허용된 형식(영문/숫자/`_`/`-`, 1~64자)인지 검증한다.
 func validateKeyName(name string) error {
-	if !keyNameRE.MatchString(name) {
-		return &KeyPolicyError{Msg: fmt.Sprintf("invalid key name %q: must match %s", name, keyNameRE.String())}
-	}
-	return nil
+	_, _, err := ParseName(name)
+	return err
 }
 
 // loadRing은 barrier에서 KeyRing을 읽어온다. 존재하지 않으면 barrier.ErrNotFound를

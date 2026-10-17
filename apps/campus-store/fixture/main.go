@@ -50,12 +50,14 @@ func main() {
 	must(err)
 	verifier := authn.NewVerifier([]crypto.PublicKey{&rsaKey.PublicKey}, authn.Config{Strict: true, Issuer: "campus-local-fixture", Audience: "kms-system"})
 	client := fake.NewSimpleClientset()
+	// C+B 모델: campus-shipping은 점 없는 전역 키라 SAR namespace가 ""(클러스터 범위)로 온다 —
+	// ClusterRoleBinding만 효력이 있다는 운영 규칙을 그대로 흉내 낸다.
 	permissions := map[string]string{"checkout": "encrypt", "shipping": "decrypt", "migration": "rewrap"}
 	client.PrependReactor("create", "subjectaccessreviews", func(action ktesting.Action) (bool, runtime.Object, error) {
 		sar := action.(ktesting.CreateAction).GetObject().(*authorizationv1.SubjectAccessReview).DeepCopy()
 		a := sar.Spec.ResourceAttributes
 		for user, verb := range permissions {
-			if a != nil && a.Group == "kms.local" && a.Resource == "keys" && a.Namespace == "campus-store" && a.Name == "campus-shipping" && a.Verb == verb && sar.Spec.User == "system:serviceaccount:campus-store:"+user {
+			if a != nil && a.Group == "kms.local" && a.Resource == "keys" && a.Namespace == "" && a.Name == "campus-shipping" && a.Verb == verb && sar.Spec.User == "system:serviceaccount:campus-store:"+user {
 				sar.Status.Allowed = true
 			}
 		}

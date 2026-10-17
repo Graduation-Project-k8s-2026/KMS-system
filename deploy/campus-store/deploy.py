@@ -130,8 +130,10 @@ def main():
         resources.append(resource('ServiceAccount',role,automountServiceAccountToken=False))
     for service,verb in [('checkout','encrypt'),('shipping','decrypt'),('migration','rewrap')]:
         resources += [
-            {'apiVersion':'rbac.authorization.k8s.io/v1','kind':'Role','metadata':{'name':service,'namespace':NS},'rules':[{'apiGroups':['kms.local'],'resources':['keys'],'resourceNames':[KEY],'verbs':[verb]}]},
-            {'apiVersion':'rbac.authorization.k8s.io/v1','kind':'RoleBinding','metadata':{'name':service,'namespace':NS},'subjects':[{'kind':'ServiceAccount','name':service,'namespace':NS}],'roleRef':{'apiGroup':'rbac.authorization.k8s.io','kind':'Role','name':service}},
+            # C+B 키 소유 모델: campus-shipping은 점 없는 "클러스터 전역 키"라서 네임스페이스 Role은 효력이 없다.
+            # ClusterRole + ClusterRoleBinding으로만 허용된다(이름 규칙 kms-cb-<키>-<verbs>, verb별 ClusterRole.
+            {'apiVersion':'rbac.authorization.k8s.io/v1','kind':'ClusterRole','metadata':{'name':'kms-cb-'+KEY+'-'+verb},'rules':[{'apiGroups':['kms.local'],'resources':['keys'],'resourceNames':[KEY],'verbs':[verb]}]},
+            {'apiVersion':'rbac.authorization.k8s.io/v1','kind':'ClusterRoleBinding','metadata':{'name':'kms-cb-'+KEY+'-'+verb},'subjects':[{'kind':'ServiceAccount','name':service,'namespace':NS}],'roleRef':{'apiGroup':'rbac.authorization.k8s.io','kind':'ClusterRole','name':'kms-cb-'+KEY+'-'+verb}},
         ]
     for mode in ['portal']+SERVICES:
         portal=mode=='portal'

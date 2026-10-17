@@ -4,7 +4,7 @@ ROOT=pathlib.Path(__file__).resolve().parents[1]
 def module(name):
  s=importlib.util.spec_from_file_location(name,ROOT/'scripts'/f'{name}.py');m=importlib.util.module_from_spec(s);s.loader.exec_module(m);return m
 fixture=module('create-bench-fixture')
-renderer=module('render-release');etcd=module('verify-etcd-encryption');rewrite=module('rewrite-secrets')
+migrate=module('migrate-rbac-cb');renderer=module('render-release');etcd=module('verify-etcd-encryption');rewrite=module('rewrite-secrets')
 class Contracts(unittest.TestCase):
  def values(self):
   v={k:'fixture' for k in renderer.REQUIRED}
@@ -121,4 +121,78 @@ class Contracts(unittest.TestCase):
     rewrite.main();replace.assert_called_once();self.assertEqual(replace.call_args.args[0]['metadata']['namespace'],'ns-b')
    self.assertEqual(json.loads(checkpoint.read_text()),['ns-a/sample','ns-b/sample'])
    self.assertNotIn('sensitive-fixture',checkpoint.read_text()+output.getvalue())
+
+def _rb(kind,ns,name,role_kind,role,subjects):
+ md={'name':name};
+ if ns:md['namespace']=ns
+ return {'kind':kind,'metadata':md,'roleRef':{'kind':role_kind,'name':role},'subjects':subjects}
+def _role(kind,ns,name,rules):
+ md={'name':name}
+ if ns:md['namespace']=ns
+ return {'kind':kind,'metadata':md,'rules':rules}
+def _rule(names,verbs):
+ r={'apiGroups':['kms.local'],'resources':['keys'],'verbs':verbs}
+ if names:r['resourceNames']=names
+ return r
+SA=lambda ns,n:{'kind':'ServiceAccount','name':n,'namespace':ns}
+class MigrateRbac(unittest.TestCase):
+ def items(self):
+  return [
+   _role('Role','shop','pay',[_rule(['Payment_Key'],['encrypt','decrypt'])]),
+   _rb('RoleBinding','shop','pay','Role','pay',[SA('shop','api'),SA('batch','worker')]),
+   _role('Role','shop','pay2',[_rule(['Payment_Key'],['rewrap'])]),
+   _rb('RoleBinding','shop','pay2','Role','pay2',[SA('shop','api')]),
+   _role('Role','team-a','own',[_rule(['team-a.ledger'],['encrypt'])]),
+   _rb('RoleBinding','team-a','own','Role','own',[SA('team-a','app')]),
+   _role('Role','wide','all',[_rule([],['encrypt'])]),
+   _rb('RoleBinding','wide','all','Role','all',[SA('wide','app')]),
+   _role('ClusterRole',None,'done',[_rule(['already'],['encrypt'])]),
+   _rb('ClusterRoleBinding',None,'done','ClusterRole','done',[SA('shop','c')]),
+   _role('Role','shop','c',[_rule(['already'],['encrypt'])]),
+   _rb('RoleBinding','shop','c','Role','c',[SA('shop','c')]),
+   _role('Role','shop','other',[{'apiGroups':[''],'resources':['secrets'],'verbs':['get']}]),
+   _rb('RoleBinding','shop','other','Role','other',[SA('shop','x')]),
+  ]
+ def test_check_reports_lost_kept_warnings(self):
+  grants,warnings,cg=migrate.analyze(self.items())
+  table=migrate.render_table(grants,warnings,cg)
+  self.assertIn('사라짐',table);self.assertIn('유지',table);self.assertIn('이전됨',table)
+  self.assertTrue(any('resourceNames 없음' in w for w in warnings))
+  status={g['key']:migrate.classify(g)[0] for g in grants}
+  self.assertEqual(status['team-a.ledger'],'kept');self.assertEqual(status['Payment_Key'],'lost')
+  self.assertNotIn('secrets',table)
+ def test_generate_makes_equivalent_clusterroles_and_skips_covered(self):
+  grants,_,cg=migrate.analyze(self.items())
+  docs,skipped=migrate.build_manifests(grants,cg)
+  roles={d['metadata']['name']:d for d in docs if d['kind']=='ClusterRole'}
+  binds={d['metadata']['name']:d for d in docs if d['kind']=='ClusterRoleBinding'}
+  self.assertEqual(set(roles),set(binds));self.assertEqual(len(roles),2)  # decrypt+encrypt / rewrap 두 묶음
+  for name,role in roles.items():
+   self.assertEqual(role['rules'][0]['resourceNames'],['Payment_Key']);self.assertEqual(role['rules'][0]['apiGroups'],['kms.local'])
+   self.assertRegex(name,r'^[a-z0-9]([-a-z0-9]*[a-z0-9])?$');self.assertTrue(name.startswith('kms-cb-payment-key-'))
+   self.assertEqual(binds[name]['roleRef'],{'apiGroup':'rbac.authorization.k8s.io','kind':'ClusterRole','name':name})
+  by_verbs={tuple(r['rules'][0]['verbs']):n for n,r in roles.items()}
+  self.assertEqual({(s['namespace'],s['name']) for s in binds[by_verbs[('decrypt','encrypt')]]['subjects']},{('shop','api'),('batch','worker')})
+  self.assertEqual([s['name'] for s in binds[by_verbs[('rewrap',)]]['subjects']],['api'])
+  self.assertEqual(len(skipped),1)  # 'already' 는 이미 ClusterRoleBinding 으로 있음
+  self.assertNotIn('team-a.ledger',json.dumps(docs))
+ def test_cli_generate_writes_file_without_overwrite_and_leaves_roles(self):
+  with tempfile.TemporaryDirectory() as d:
+   inp=pathlib.Path(d)/'in.json';inp.write_text(json.dumps({'kind':'List','items':self.items()}))
+   out=pathlib.Path(d)/'cb.yaml'
+   with contextlib.redirect_stdout(io.StringIO()):
+    self.assertEqual(migrate.main(['generate','--input',str(inp),'--output',str(out)]),0)
+    docs=list(renderer.yaml.safe_load_all(out.read_text()))
+    self.assertTrue(all(x['kind'] in ('ClusterRole','ClusterRoleBinding') for x in docs if x))
+    self.assertEqual(migrate.main(['generate','--input',str(inp),'--output',str(out)]),2)  # 덮어쓰기 거부
+    self.assertEqual(migrate.main(['check','--input',str(inp)]),0)
+ def test_repo_templates_use_cluster_scope_for_global_keys(self):
+  docs=[]
+  for f in (ROOT/'deploy/oci-single-node/templates').glob('serviceaccounts-rbac.yaml'):
+   docs+=list(renderer.yaml.load_all(renderer.render(f.read_text(),Contracts.values(Contracts())),Loader=renderer.UniqueLoader))
+  kms=[x for x in docs if x and x.get('kind') in ('Role','ClusterRole') and any('kms.local' in r.get('apiGroups',[]) for r in x.get('rules',[]))]
+  self.assertTrue(kms);self.assertTrue(all(x['kind']=='ClusterRole' for x in kms))
+  bind=next(x for x in docs if x and x.get('kind')=='ClusterRoleBinding' and x['metadata']['name']==kms[0]['metadata']['name'])
+  self.assertEqual({(s['namespace'],s['name']) for s in bind['subjects']},{('kms-demo','app-a'),('kms-bench','bench-transit')})
+
 if __name__=='__main__':unittest.main()

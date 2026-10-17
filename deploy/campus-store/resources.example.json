@@ -152,10 +152,9 @@
     },
     {
       "apiVersion": "rbac.authorization.k8s.io/v1",
-      "kind": "Role",
+      "kind": "ClusterRole",
       "metadata": {
-        "name": "checkout",
-        "namespace": "campus-store"
+        "name": "kms-cb-campus-shipping-encrypt"
       },
       "rules": [
         {
@@ -176,10 +175,9 @@
     },
     {
       "apiVersion": "rbac.authorization.k8s.io/v1",
-      "kind": "RoleBinding",
+      "kind": "ClusterRoleBinding",
       "metadata": {
-        "name": "checkout",
-        "namespace": "campus-store"
+        "name": "kms-cb-campus-shipping-encrypt"
       },
       "subjects": [
         {
@@ -190,16 +188,15 @@
       ],
       "roleRef": {
         "apiGroup": "rbac.authorization.k8s.io",
-        "kind": "Role",
-        "name": "checkout"
+        "kind": "ClusterRole",
+        "name": "kms-cb-campus-shipping-encrypt"
       }
     },
     {
       "apiVersion": "rbac.authorization.k8s.io/v1",
-      "kind": "Role",
+      "kind": "ClusterRole",
       "metadata": {
-        "name": "shipping",
-        "namespace": "campus-store"
+        "name": "kms-cb-campus-shipping-decrypt"
       },
       "rules": [
         {
@@ -220,10 +217,9 @@
     },
     {
       "apiVersion": "rbac.authorization.k8s.io/v1",
-      "kind": "RoleBinding",
+      "kind": "ClusterRoleBinding",
       "metadata": {
-        "name": "shipping",
-        "namespace": "campus-store"
+        "name": "kms-cb-campus-shipping-decrypt"
       },
       "subjects": [
         {
@@ -234,16 +230,15 @@
       ],
       "roleRef": {
         "apiGroup": "rbac.authorization.k8s.io",
-        "kind": "Role",
-        "name": "shipping"
+        "kind": "ClusterRole",
+        "name": "kms-cb-campus-shipping-decrypt"
       }
     },
     {
       "apiVersion": "rbac.authorization.k8s.io/v1",
-      "kind": "Role",
+      "kind": "ClusterRole",
       "metadata": {
-        "name": "migration",
-        "namespace": "campus-store"
+        "name": "kms-cb-campus-shipping-rewrap"
       },
       "rules": [
         {
@@ -264,10 +259,9 @@
     },
     {
       "apiVersion": "rbac.authorization.k8s.io/v1",
-      "kind": "RoleBinding",
+      "kind": "ClusterRoleBinding",
       "metadata": {
-        "name": "migration",
-        "namespace": "campus-store"
+        "name": "kms-cb-campus-shipping-rewrap"
       },
       "subjects": [
         {
@@ -278,8 +272,8 @@
       ],
       "roleRef": {
         "apiGroup": "rbac.authorization.k8s.io",
-        "kind": "Role",
-        "name": "migration"
+        "kind": "ClusterRole",
+        "name": "kms-cb-campus-shipping-rewrap"
       }
     },
     {
@@ -338,7 +332,7 @@
             "containers": [
               {
                 "name": "app",
-                "image": "campus-store:3099e1074354",
+                "image": "campus-store:14b9f8a5cd6c",
                 "imagePullPolicy": "Never",
                 "env": [
                   {
@@ -608,7 +602,7 @@
             "containers": [
               {
                 "name": "app",
-                "image": "campus-store:3099e1074354",
+                "image": "campus-store:14b9f8a5cd6c",
                 "imagePullPolicy": "Never",
                 "env": [
                   {
@@ -841,7 +835,7 @@
             "containers": [
               {
                 "name": "app",
-                "image": "campus-store:3099e1074354",
+                "image": "campus-store:14b9f8a5cd6c",
                 "imagePullPolicy": "Never",
                 "env": [
                   {
@@ -1074,7 +1068,7 @@
             "containers": [
               {
                 "name": "app",
-                "image": "campus-store:3099e1074354",
+                "image": "campus-store:14b9f8a5cd6c",
                 "imagePullPolicy": "Never",
                 "env": [
                   {
@@ -1307,7 +1301,7 @@
             "containers": [
               {
                 "name": "app",
-                "image": "campus-store:3099e1074354",
+                "image": "campus-store:14b9f8a5cd6c",
                 "imagePullPolicy": "Never",
                 "env": [
                   {

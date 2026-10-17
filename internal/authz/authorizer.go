@@ -109,7 +109,14 @@ func (a *Authorizer) Allowed(ctx context.Context, identity authn.Identity, resou
 
 // Check distinguishes a policy denial from an unavailable authorization backend.
 func (a *Authorizer) Check(ctx context.Context, identity authn.Identity, resourceName, verb string) (bool, error) {
-	key := cacheKey{subject: identity.Subject, namespace: identity.Namespace, name: resourceName, verb: verb}
+	// C+B 모델: 판단 네임스페이스는 "요청자의 네임스페이스"가 아니라 "키 소유 네임스페이스"다.
+	// <ns>.<name> 키는 <ns>, 점 없는 전역 키는 ""(클러스터 범위 → ClusterRoleBinding만 효력).
+	// 이름 형식이 틀리면 SAR을 보내지 않고 거부한다(존재하지 않는 키·권한 없는 키와 같은 403).
+	judgedNS, nsErr := JudgedNamespace(resourceName)
+	if nsErr != nil {
+		return false, nil
+	}
+	key := cacheKey{subject: identity.Subject, namespace: judgedNS, name: resourceName, verb: verb}
 
 	if a.cache != nil {
 		if allowed, fresh := a.cache.get(key); fresh {
@@ -129,7 +136,7 @@ func (a *Authorizer) Check(ctx context.Context, identity authn.Identity, resourc
 			User:   identity.Subject,
 			Groups: identity.Groups,
 			ResourceAttributes: &authorizationv1.ResourceAttributes{
-				Namespace: identity.Namespace,
+				Namespace: judgedNS,
 				Verb:      verb,
 				Group:     APIGroup,
 				Resource:  Resource,
@@ -145,7 +152,7 @@ func (a *Authorizer) Check(ctx context.Context, identity authn.Identity, resourc
 	if err != nil || result == nil || result.Status.EvaluationError != "" {
 		metrics.AuthzSARRequestsTotal.WithLabelValues("error").Inc()
 		slog.Error("authz: SubjectAccessReview call failed",
-			"subject", identity.Subject, "namespace", identity.Namespace,
+			"subject", identity.Subject, "namespace", judgedNS,
 			"verb", verb, "fail_open", a.cfg.FailOpen)
 		if a.cfg.FailOpen {
 			return true, nil
@@ -164,7 +171,7 @@ func (a *Authorizer) Check(ctx context.Context, identity authn.Identity, resourc
 	} else {
 		metrics.AuthzSARRequestsTotal.WithLabelValues("denied").Inc()
 		slog.Warn("authz: denied",
-			"subject", identity.Subject, "namespace", identity.Namespace,
+			"subject", identity.Subject, "namespace", judgedNS,
 			"key", resourceName, "verb", verb, "reason", result.Status.Reason)
 	}
 

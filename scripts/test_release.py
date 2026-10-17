@@ -8,7 +8,7 @@ migrate=module('migrate-rbac-cb');renderer=module('render-release');etcd=module(
 class Contracts(unittest.TestCase):
  def values(self):
   v={k:'fixture' for k in renderer.REQUIRED}
-  v.update(NODE_NAME='test-node',NODE_IP='10.0.0.2',GUI_FQDN='kms.example.test',DEMO_FQDN='demo.example.test',SA_ISSUER='https://kubernetes.default.svc.cluster.local',SOURCE_SHA='b'*40,SERVER_VERSION='v1.35.9',TPM_GROUP_GID='995')
+  v.update(NODE_NAME='test-node',NODE_IP='10.0.0.2',GUI_FQDN='kms.example.test',DEMO_FQDN='demo.example.test',SA_ISSUER='https://kubernetes.default.svc.cluster.local',SOURCE_SHA='b'*40,SERVER_VERSION='v1.35.9')
   for k in v:
    if k.endswith('_IMAGE'):v[k]='example/image@sha256:'+'a'*64
   return v
@@ -24,13 +24,14 @@ class Contracts(unittest.TestCase):
   self.assertEqual(env['KMS_AUTHN'],'on');self.assertEqual(env['KMS_AUTHZ'],'on')
   self.assertEqual(env['KMS_AUTO_UNSEAL'],'false');self.assertEqual(env['KMS_AUTHZ_FAIL_OPEN'],'false')
   self.assertTrue(env['KMS_TRANSIT_TLS_CERT']);self.assertTrue(env['KMS_TRANSIT_TLS_KEY'])
-  self.assertEqual(env['KMS_SEAL_ALLOWED'],'shamir,tpm');self.assertNotIn('KMS_SEAL_TYPE',env)
+  self.assertEqual(env['KMS_SEAL_ALLOWED'],'shamir');self.assertNotIn('KMS_SEAL_TYPE',env)
   self.assertEqual(env['KMS_TRANSIT_AUDIT_DIR'],'/transit-audit')
-  self.assertEqual(env['KMS_TPM_DEVICE'],'/dev/tpmrm0');self.assertNotIn('KMS_TPM_PCRS',env)
-  self.assertEqual(static['spec']['securityContext']['supplementalGroups'],[995])
-  tpm=next(v for v in static['spec']['volumes'] if v['name']=='tpm')
-  self.assertEqual(tpm['hostPath'],{'path':'/dev/tpmrm0'})
-  self.assertIn({'name':'tpm','mountPath':'/dev/tpmrm0'},static['spec']['containers'][0]['volumeMounts'])
+  # TPM 배포는 보류(ADR-010): 장치 env, tpm 볼륨/마운트, supplementalGroups가 없어야 한다.
+  self.assertNotIn('KMS_TPM_DEVICE',env);self.assertNotIn('KMS_TPM_PCRS',env)
+  self.assertNotIn('tpm',[v['name'] for v in static['spec']['volumes']])
+  self.assertNotIn('tpm',[m['name'] for m in static['spec']['containers'][0]['volumeMounts']])
+  self.assertNotIn('supplementalGroups',static['spec'].get('securityContext',{}))
+  self.assertNotIn('tpmrm',renderer.yaml.safe_dump(static))
   services=[x for x in docs if x.get('kind')=='Service' and x['spec'].get('type')=='NodePort']
   self.assertEqual([x['metadata']['name'] for x in services],['kms-demo-app'])
   self.assertEqual(services[0]['spec']['ports'][0]['nodePort'],30443)
@@ -38,13 +39,8 @@ class Contracts(unittest.TestCase):
   for doc in docs:
    for rule in doc.get('rules',[]):
     for field in ['verbs','resources','apiGroups']:self.assertNotIn('*',rule.get(field,[]))
- def test_render_cli_rejects_non_numeric_tpm_gid(self):
-  with tempfile.TemporaryDirectory() as d:
-   for gid,code in (('995',0),('tss',2),('0',2),('995;x',2)):
-    vals=self.values();vals['TPM_GROUP_GID']=gid
-    f=pathlib.Path(d)/'v.json';f.write_text(json.dumps(vals));out=pathlib.Path(d)/('out-'+str(abs(hash(gid))))
-    r=subprocess.run(['python3',str(ROOT/'scripts/render-release.py'),'--values',str(f),'--templates',str(ROOT/'deploy/oci-single-node/templates'),'--output',str(out)],capture_output=True)
-    self.assertEqual(r.returncode,code,(gid,r.stderr))
+ def test_render_cli_ignores_no_tpm_input(self):
+  self.assertNotIn('TPM_GROUP_GID',renderer.REQUIRED)
  def test_render_rejects_duplicate_unresolved_and_unpinned(self):
   for raw in ['kind: Pod\nkind: Job\n','image: latest\n','image: ${MISSING}\n','image: IMAGE_TAG\n','spec: {containers: [{name: app}]}','spec: {initContainers: [{name: init}]}','spec: {containers: []}','kind: Pod\nspec: {}']:
    with self.assertRaises(ValueError):renderer.render(raw,self.values())

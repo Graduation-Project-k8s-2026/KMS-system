@@ -39,6 +39,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -118,26 +119,30 @@ func main() {
 		}
 	}
 
-	sealType := getenvDefault("KMS_SEAL_TYPE", "shamir")
-	if sealType != "shamir" {
-		log.Fatal("production server requires host-independent Shamir seal; use isolated lab fixtures for other seals")
+	// 허용 봉인 방식. 실제 방식은 저장소의 init 기록(seal 값)이 정한다 — 환경변수가
+	// 아니라 기록이 진실의 원천이다(ADR-010). KMS_SEAL_ALLOWED는 "이 서버가 허용하는
+	// 방식의 목록"일 뿐이고, 기록이 허용 목록 밖이면 기동을 거부한다(fail-closed).
+	// dev/k8s 같은 방식은 운영 서버에서 계속 거부한다.
+	allowedSeals, err := parseAllowedSeals(getenvDefault("KMS_SEAL_ALLOWED", "shamir,tpm"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	if legacy := os.Getenv("KMS_SEAL_TYPE"); legacy != "" {
+		if legacy != "shamir" {
+			log.Fatal("production server supports only shamir/tpm seals (KMS_SEAL_ALLOWED); KMS_SEAL_TYPE=" + legacy + " is rejected")
+		}
+		log.Print("KMS_SEAL_TYPE is deprecated and ignored (the seal mode comes from the initialization record); use KMS_SEAL_ALLOWED to restrict allowed modes")
 	}
 
-	// shamirParts/shamirThreshold는 seal_type이 "shamir"일 때만 쓰이지만,
-	// admin.Deps에 그대로 전달해 POST /v1/sys/init(InitShamir 호출)과
-	// seal-status/unseal의 진행 상황 표시("2/3")에 재사용한다.
-	var (
-		sealer          seal.Seal
-		shamirParts     int
-		shamirThreshold int
-	)
-
-	shamirParts = getenvIntDefault("KMS_SHAMIR_PARTS", 5)
-	shamirThreshold = getenvIntDefault("KMS_SHAMIR_THRESHOLD", 3)
+	shamirParts := getenvIntDefault("KMS_SHAMIR_PARTS", 5)
+	shamirThreshold := getenvIntDefault("KMS_SHAMIR_THRESHOLD", 3)
 	if shamirParts < 2 || shamirParts > 255 || shamirThreshold < 2 || shamirThreshold > shamirParts {
 		log.Fatal("invalid Shamir parameters")
 	}
-	sealer = seal.NewShamirSeal(shamirThreshold)
+	tpmPCRs, err := seal.ParsePCRs(os.Getenv("KMS_TPM_PCRS"))
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	store := newStorage("")
 	if storageKind != "file" {
@@ -153,10 +158,40 @@ func main() {
 	// 조립 순서: seal -> storage -> barrier -> keys -> transit -> rotation.
 	// 각 층은 자신보다 아래 층을 인터페이스로만 알고 있으므로, 실제 구현체가
 	// 무엇인지 결정해서 서로 연결하는 건 이 main의 책임이다.
+	//
+	// Seal은 Switch 하나로 조립한다: 안에 Shamir(항상, 복구 조각용)와 TPM(필요할 때
+	// 장치를 열어서)이 들어 있고, 어느 쪽으로 해제할지는 init 기록의 seal 값이 정한다.
+	var openTPM func() (seal.TPMBackend, error)
+	if allowedSeals["tpm"] {
+		tpmDevice := getenvDefault("KMS_TPM_DEVICE", seal.DefaultTPMDevice)
+		var opts []seal.TPMOption
+		if len(tpmPCRs) > 0 {
+			opts = append(opts, seal.WithPCRs(tpmPCRs))
+		}
+		openTPM = func() (seal.TPMBackend, error) {
+			dev, err := seal.OpenTPMDevice(tpmDevice)
+			if err != nil {
+				return nil, err
+			}
+			return seal.NewTPMSeal(dev, store, opts...), nil
+		}
+	}
+	sealer := seal.NewSwitch("shamir", seal.NewShamirSeal(shamirThreshold), nil, openTPM, store)
 	b := barrier.NewBarrier(store, sealer)
 	if err := b.CheckInitialization(shamirParts, shamirThreshold); err != nil {
 		log.Fatal(err)
 	}
+	sealMode, err := b.SealMode()
+	if err != nil {
+		log.Fatalf("initialization record unreadable: %v", err)
+	}
+	if sealMode == "" {
+		sealMode = "shamir" // 미초기화 저장소: POST /v1/sys/init이 shamir로 시작한다
+	}
+	if !allowedSeals[sealMode] {
+		log.Fatalf("initialization record uses seal %q, which is not in KMS_SEAL_ALLOWED", sealMode)
+	}
+	sealer.SetMode(sealMode)
 	km := keys.NewKeyManager(b)
 	v2Name := getenvDefault("KMS_V2_KEY_NAME", "k8s-secrets")
 	if !regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`).MatchString(v2Name) {
@@ -170,8 +205,9 @@ func main() {
 
 	defer scheduler.Stop()
 
-	// Production always requires manual Shamir unseal. Scheduler starts in the callback.
-	if autoUnseal {
+	// Shamir 모드는 항상 사람이 조각을 넣어야 한다(자동 해제 거부). TPM 모드는 자동
+	// 해제가 목적이라 이 규칙을 적용하지 않는다 — 아래에서 기동 시 TPM 해제를 시도한다.
+	if autoUnseal && sealMode == "shamir" {
 		log.Fatal("KMS_AUTO_UNSEAL must be false for the production Shamir server")
 	}
 
@@ -193,21 +229,38 @@ func main() {
 		Verifier:    verifier,
 		Authorizer:  authorizer,
 	})
+	onUnseal := func() error {
+		_, err := km.GetKeyMeta(v2Name)
+		if errors.Is(err, &keys.KeyNotFoundError{}) {
+			_, err = km.CreateKey(v2Name, 0)
+		}
+		if err != nil {
+			return err
+		}
+		scheduler.Start()
+		return nil
+	}
+
+	// TPM 모드: 기동 시 TPM으로 자동 해제를 시도한다. 실패하면(장치 없음, blob 손상,
+	// 기록과 불일치 등) 다른 방식으로 바꾸거나 초기화하지 않고 봉인 상태로 뜬다 —
+	// 운영자가 POST /v1/sys/unseal로 복구 조각 threshold개를 넣어 해제한다.
+	// 로그에는 실패 원인만 남기고 키 자료는 남기지 않는다.
+	if sealMode == "tpm" {
+		if err := b.Unseal(); err != nil {
+			log.Printf("TPM auto-unseal failed, starting sealed; submit recovery shares to POST /v1/sys/unseal: %v", err)
+		} else if err := onUnseal(); err != nil {
+			b.Seal()
+			log.Printf("TPM auto-unseal succeeded but post-unseal setup failed, staying sealed: %v", err)
+		} else {
+			log.Print("TPM auto-unseal succeeded")
+		}
+	}
+
 	adminRouter := admin.NewRouter(admin.Deps{
-		Barrier: b,
-		Keys:    km,
-		Seal:    sealer,
-		OnUnseal: func() error {
-			_, err := km.GetKeyMeta(v2Name)
-			if errors.Is(err, &keys.KeyNotFoundError{}) {
-				_, err = km.CreateKey(v2Name, 0)
-			}
-			if err != nil {
-				return err
-			}
-			scheduler.Start()
-			return nil
-		},
+		Barrier:         b,
+		Keys:            km,
+		Seal:            sealer,
+		OnUnseal:        onUnseal,
 		OnSeal:          scheduler.Stop,
 		ReservedKey:     v2Name,
 		ShamirParts:     shamirParts,
@@ -492,6 +545,26 @@ func listenUnixSocket(path string) (net.Listener, error) {
 		return nil, err
 	}
 	return l, nil
+}
+
+// parseAllowedSeals는 KMS_SEAL_ALLOWED("shamir,tpm")를 집합으로 바꾼다. shamir/tpm
+// 외의 값(dev, k8s 등)은 운영 서버에서 허용하지 않으므로 에러다.
+func parseAllowedSeals(v string) (map[string]bool, error) {
+	out := map[string]bool{}
+	for _, f := range strings.Split(v, ",") {
+		f = strings.TrimSpace(f)
+		if f == "" {
+			continue
+		}
+		if f != "shamir" && f != "tpm" {
+			return nil, fmt.Errorf("KMS_SEAL_ALLOWED: unsupported seal %q (production allows only shamir, tpm)", f)
+		}
+		out[f] = true
+	}
+	if len(out) == 0 {
+		return nil, errors.New("KMS_SEAL_ALLOWED must list at least one of shamir, tpm")
+	}
+	return out, nil
 }
 
 func getenvDefault(key, fallback string) string {

@@ -9,7 +9,10 @@
 | KMS_STORAGE / KMS_DATA_DIR | file / ./data. 제품은 file만 허용 | root-confined 파일 I/O, 프로세스 flock |
 | KMS_SEAL_TYPE | shamir만 허용 | 다른 seal은 라이브러리/격리 시험에 보존 |
 | KMS_SHAMIR_PARTS / KMS_SHAMIR_THRESHOLD | 5 / 3, 2≤threshold≤parts≤255 | 영속 metadata 값과 다르면 시작 실패 |
-| KMS_AUTO_UNSEAL | false. true 거부 | 사람의 share 입력만 허용 |
+| KMS_AUTO_UNSEAL | false. true는 **Shamir 모드에서만** 거부 | Shamir는 사람의 share 입력만 허용. TPM 모드(기록이 tpm)는 기동 시 TPM 자동 해제를 항상 시도 |
+| KMS_SEAL_ALLOWED | 기본 `shamir,tpm`. 그 외 값(dev, k8s) 거부 | 허용 목록. 실제 방식은 init 기록의 seal 값이 정하고, 목록 밖이면 기동 거부. 기존 `KMS_SEAL_TYPE=shamir`는 경고 후 무시, 다른 값은 거부 |
+| KMS_TPM_DEVICE | 기본 `/dev/tpmrm0` | 기록이 tpm일 때의 기동과 seal-migrate에서만 연다 |
+| KMS_TPM_PCRS | 기본 비어 있음(PCR 미사용). 예 `7` | 켜면 커널/펌웨어 업데이트 후 자동 해제가 실패할 수 있다 (ADR-010) |
 | KMS_TRANSIT_ADDR | :8200 (템플릿은 NODE_IP:8200) | HTTPS만 제공 |
 | KMS_TRANSIT_TLS_CERT / KMS_TRANSIT_TLS_KEY | 필수 | TLS≥1.2, 시작 시 파일 로드 |
 | KMS_ADMIN_SOCKET | /var/run/kms/admin.sock (템플릿은 별도 디렉터리) | UDS 0600, live socket/일반 파일 덮어쓰기 금지 |

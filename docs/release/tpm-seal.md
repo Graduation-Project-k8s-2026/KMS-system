@@ -39,7 +39,7 @@
    - env 추가: `KMS_TPM_DEVICE=/dev/tpmrm0` (PCR을 쓸 때만 `KMS_TPM_PCRS`).
    - **장치를 어떻게 컨테이너에 넣을지는 해결책에 따른다.** hostPath(`/dev/tpmrm0` 볼륨 + `volumeMounts`)는 위 cgroup 문제로 동작하지 않았다.
      NRI 플러그인(ADR-010 설계)을 쓰면 매니페스트에 장치 볼륨이 필요 없다(플러그인이 주입). hostPath를 다시 쓴다면 `supplementalGroups`에
-     `${TPM_GROUP_GID}`도 넣고, **type을 지정하지 말 것이 아니라** 빈 디렉터리 함정(⚠)을 먼저 해결할 것.
+     `${TPM_GROUP_GID}`도 넣는다. 이전 템플릿은 hostPath `type`을 비워 두었는데 그 때문에 빈 디렉터리가 생겼으므로(알려진 위험 3), 쓴다면 `type: CharDevice`와 kubelet 순서 보장을 같이 검토한다.
 2. `scripts/render-release.py`: `REQUIRED`에 `'TPM_GROUP_GID'`를 다시 넣고, `main()`에 숫자 gid 검증(`[1-9][0-9]{0,9}`)을 복원.
    `deploy/oci-single-node/release-values.example.json`에 `"TPM_GROUP_GID": "REQUIRED_TSS_GROUP_GID"` 복원.
 3. `scripts/test_release.py`: 지금의 "TPM 항목이 없다" 단언을 뒤집고 gid 검증 테스트를 복원(git 이력 `0fa56e3`에 원본이 있다).

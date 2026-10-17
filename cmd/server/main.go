@@ -206,6 +206,16 @@ func main() {
 	}
 	sealer.SetMode(sealMode)
 	km := keys.NewKeyManager(b)
+	// 보호 키: 비활성화·삭제 예약이 거부되는 키. KMS v2 키는 kmsv2.New가 자동으로 보호하므로 설정이
+	// 비어 있어도 안전하다. KMS_PROTECTED_KEYS(쉼표 목록)로 키를 더 지정할 수 있다.
+	for _, name := range strings.Split(os.Getenv("KMS_PROTECTED_KEYS"), ",") {
+		if name = strings.TrimSpace(name); name != "" {
+			if _, _, err := keys.ParseName(name); err != nil {
+				log.Fatalf("invalid KMS_PROTECTED_KEYS entry %q", name)
+			}
+			km.Protect(name)
+		}
+	}
 	v2Name := getenvDefault("KMS_V2_KEY_NAME", "k8s-secrets")
 	if !regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`).MatchString(v2Name) {
 		log.Fatal("invalid reserved KMS v2 key name")
@@ -217,6 +227,19 @@ func main() {
 	}))
 
 	defer scheduler.Stop()
+
+	// 삭제 유예가 끝난 키를 지우는 백그라운드 작업. 삭제는 되돌릴 수 없으므로 지우기 전과 후에 관리 감사
+	// 기록을 남기고, 기록이 실패하면 삭제하지 않는다.
+	reaper := rotation.NewReaper(km, time.Duration(getenvIntDefault("KMS_KEY_REAPER_INTERVAL_SEC", 600))*time.Second,
+		func(name string) error {
+			return auditLog.Write(audit.Event{Subject: "system:key-reaper", Action: "key purge requested", Key: name, Allowed: true})
+		},
+		func(name string) {
+			if err := auditLog.Write(audit.Event{Subject: "system:key-reaper", Action: "key purge completed", Key: name, Allowed: true, Success: true}); err != nil {
+				log.Printf("key reaper: audit write after purge failed: %v", err)
+			}
+		})
+	defer reaper.Stop()
 
 	// Shamir 모드는 항상 사람이 조각을 넣어야 한다(자동 해제 거부). TPM 모드는 자동
 	// 해제가 목적이라 이 규칙을 적용하지 않는다 — 아래에서 기동 시 TPM 해제를 시도한다.
@@ -251,6 +274,7 @@ func main() {
 			return err
 		}
 		scheduler.Start()
+		reaper.Start()
 		return nil
 	}
 
@@ -274,7 +298,7 @@ func main() {
 		Keys:            km,
 		Seal:            sealer,
 		OnUnseal:        onUnseal,
-		OnSeal:          scheduler.Stop,
+		OnSeal:          func() { scheduler.Stop(); reaper.Stop() },
 		ReservedKey:     v2Name,
 		ShamirParts:     shamirParts,
 		ShamirThreshold: shamirThreshold,

@@ -179,3 +179,25 @@ func TestRouter_SealMigrateIsAllowlistedPOSTOnly(t *testing.T) {
 		t.Fatalf("GET status = %d, want 404/405", resp.StatusCode)
 	}
 }
+
+// 키 수명 주기 경로는 관리 API 허용 목록에 있어야 한다 (POST만).
+func TestRouter_KeyLifecycleRoutesAllowlistedPOSTOnly(t *testing.T) {
+	router := adminapi.NewRouter(adminapi.Deps{SocketPath: filepath.Join(t.TempDir(), "unused.sock")})
+	srv := httptest.NewServer(router)
+	t.Cleanup(srv.Close)
+	for _, op := range []string{"disable", "enable", "schedule-deletion", "cancel-deletion"} {
+		resp, err := http.Post(srv.URL+"/v1/keys/app/"+op, "application/json", strings.NewReader(`{}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed {
+			t.Fatalf("POST %s = %d; not allowlisted", op, resp.StatusCode)
+		}
+		resp, _ = http.Get(srv.URL + "/v1/keys/app/" + op)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusMethodNotAllowed && resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("GET %s = %d", op, resp.StatusCode)
+		}
+	}
+}

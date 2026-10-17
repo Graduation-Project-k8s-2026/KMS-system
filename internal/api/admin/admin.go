@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"sync"
 
@@ -103,6 +104,11 @@ func NewRouter(deps Deps) http.Handler {
 			r.Get("/{name}", handleGetKey(deps))
 			r.Post("/{name}/rotate", handleRotateKey(deps))
 			r.Post("/{name}/config", handleUpdateConfig(deps))
+			// 키 수명 주기 (사용 중지 → 삭제 예약 → 삭제). 관리 소켓 전용 — Transit에는 노출하지 않는다.
+			r.Post("/{name}/disable", handleKeyState(deps, deps.Keys.DisableKey))
+			r.Post("/{name}/enable", handleKeyState(deps, deps.Keys.EnableKey))
+			r.Post("/{name}/cancel-deletion", handleKeyState(deps, deps.Keys.CancelDeletion))
+			r.Post("/{name}/schedule-deletion", handleScheduleDeletion(deps))
 		})
 	})
 
@@ -605,6 +611,40 @@ func handleUpdateConfig(deps Deps) http.HandlerFunc {
 			} else {
 				httputil.WriteError(w, err, http.StatusServiceUnavailable)
 			}
+			return
+		}
+		httputil.WriteJSON(w, http.StatusOK, meta)
+	}
+}
+
+// handleKeyState는 키 상태 전이 핸들러 공통 부분이다 (disable / enable / cancel-deletion).
+// 대상 키 이름은 경로에서 감사 미들웨어가 읽는다.
+func handleKeyState(deps Deps, op func(name string) (keys.KeyRingMeta, error)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		meta, err := op(chi.URLParam(r, "name"))
+		if err != nil {
+			httputil.WriteError(w, err, http.StatusServiceUnavailable)
+			return
+		}
+		httputil.WriteJSON(w, http.StatusOK, meta)
+	}
+}
+
+type scheduleDeletionRequest struct {
+	// PendingDays: 유예 일수 (7~30). 생략하거나 0이면 30.
+	PendingDays int `json:"pending_days"`
+}
+
+func handleScheduleDeletion(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req scheduleDeletionRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			httputil.WriteAPIError(w, http.StatusBadRequest, "bad_request", "invalid request body", "")
+			return
+		}
+		meta, err := deps.Keys.ScheduleDeletion(chi.URLParam(r, "name"), req.PendingDays)
+		if err != nil {
+			httputil.WriteError(w, err, http.StatusServiceUnavailable)
 			return
 		}
 		httputil.WriteJSON(w, http.StatusOK, meta)

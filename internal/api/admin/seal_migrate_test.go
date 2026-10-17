@@ -59,6 +59,8 @@ type proc struct {
 	b   *barrier.Barrier
 	sw  *seal.Switch
 	km  *keys.KeyManager
+
+	shares []string // initAndUnseal이 받은 조각 (재해제 테스트용)
 }
 
 func startProc(t *testing.T, store storage.StorageBackend, dev *sealtest.Device) *proc {
@@ -148,6 +150,7 @@ func (p *proc) initAndUnseal() []string {
 		p.t.Fatalf("init: %d %v", code, out)
 	}
 	shares := toStrings(out["shares"])
+	p.shares = shares
 	p.unsealWith(shares)
 	return shares
 }
@@ -575,4 +578,10 @@ func TestSealMigrate_SharesNeverLogged(t *testing.T) {
 			t.Fatal("a share appeared in the log output")
 		}
 	}
+}
+
+func (p *proc) unsealWithSharesAgain(t *testing.T) {
+	t.Helper()
+	p.sw.Shamir().Reset()
+	p.unsealWith(p.shares)
 }

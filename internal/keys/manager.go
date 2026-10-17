@@ -95,6 +95,7 @@ type KeyManager struct {
 	barrier   *barrier.Barrier
 	locks     sync.Map
 	protected sync.Map
+	clock     func() time.Time // 테스트에서 시각을 주입한다 (nil이면 time.Now)
 }
 
 // NewKeyManager는 주어진 Barrier로 KeyManager를 만든다.
@@ -102,7 +103,31 @@ func NewKeyManager(b *barrier.Barrier) *KeyManager {
 	return &KeyManager{barrier: b}
 }
 
+// Protect는 키를 보호 키로 표시한다: 최소 복호화 버전을 올릴 수 없고, 비활성화·삭제 예약이 거부되며,
+// 상태와 무관하게 항상 사용 가능하다. KMS v2 경로의 키(kmsv2.New가 자동 등록)와 KMS_PROTECTED_KEYS가 대상이다.
 func (m *KeyManager) Protect(name string) { m.protected.Store(name, true) }
+
+func (m *KeyManager) isProtected(name string) bool { _, ok := m.protected.Load(name); return ok }
+
+// SetClock은 테스트용으로 현재 시각 공급자를 바꾼다.
+func (m *KeyManager) SetClock(f func() time.Time) { m.clock = f }
+
+func (m *KeyManager) now() time.Time {
+	if m.clock != nil {
+		return m.clock()
+	}
+	return time.Now()
+}
+
+// requireUsable: 사용(암복호화·회전)할 수 있는 상태인지. 보호 키는 상태와 무관하게 통과한다 —
+// 보호 키는 애초에 비활성화될 수 없고, 혹시 저장소가 외부에서 바뀌었더라도 KMS v2 경로(클러스터 Secret
+// 읽기/쓰기)가 막히는 일은 없어야 하기 때문이다.
+func (m *KeyManager) requireUsable(name string, ring *KeyRing) error {
+	if ring.state() == StateActive || m.isProtected(name) {
+		return nil
+	}
+	return ErrKeyNotActive
+}
 func (m *KeyManager) lock(name string) func() {
 	v, _ := m.locks.LoadOrStore(name, &sync.Mutex{})
 	mu := v.(*sync.Mutex)
@@ -158,6 +183,8 @@ func toMeta(ring *KeyRing) KeyRingMeta {
 		AutoRotatePeriodSec:  ring.AutoRotatePeriodSec,
 		LastRotatedAt:        ring.LastRotatedAt,
 		Versions:             versions,
+		State:                ring.state(),
+		DeletionDate:         ring.DeletionDate,
 	}
 }
 
@@ -202,6 +229,7 @@ func (m *KeyManager) CreateKey(name string, autoRotatePeriodSec int) (KeyRingMet
 		AutoRotatePeriodSec:  autoRotatePeriodSec,
 		LastRotatedAt:        now,
 		Versions:             []KeyVersion{v1},
+		State:                StateActive,
 	}
 
 	if err := m.barrier.PutJSON(storageKey(name), ring); err != nil {
@@ -233,6 +261,9 @@ func (m *KeyManager) RotateKey(name string) (KeyRingMeta, error) {
 	if err != nil {
 		return KeyRingMeta{}, err
 	}
+	if err := m.requireUsable(name, ring); err != nil {
+		return KeyRingMeta{}, err
+	}
 
 	now := time.Now()
 	newVer, err := newVersion(ring.LatestVersion+1, now)
@@ -259,6 +290,9 @@ func (m *KeyManager) UpdateConfig(name string, minDecryptionVersion *int, autoRo
 		return KeyRingMeta{}, err
 	}
 
+	if ring.state() == StatePendingDeletion {
+		return KeyRingMeta{}, ErrKeyNotActive
+	}
 	if _, protected := m.protected.Load(name); protected && minDecryptionVersion != nil && *minDecryptionVersion != 1 {
 		return KeyRingMeta{}, &KeyPolicyError{Msg: "protected key versions must be retained", Code: "key_protected", Public: "protected key versions must be retained"}
 	}
@@ -292,6 +326,9 @@ func (m *KeyManager) GetEncryptionKEK(name string) (version int, kek []byte, err
 	if err != nil {
 		return 0, nil, err
 	}
+	if err := m.requireUsable(name, ring); err != nil {
+		return 0, nil, err
+	}
 
 	for _, v := range ring.Versions {
 		if v.Version == ring.LatestVersion {
@@ -310,6 +347,9 @@ func (m *KeyManager) GetEncryptionKEK(name string) (version int, kek []byte, err
 func (m *KeyManager) GetDecryptionKEK(name string, version int) ([]byte, error) {
 	ring, err := m.loadRing(name)
 	if err != nil {
+		return nil, err
+	}
+	if err := m.requireUsable(name, ring); err != nil {
 		return nil, err
 	}
 
@@ -346,8 +386,8 @@ func (m *KeyManager) FindKeysDueForRotation(nowMs int64) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		if ring.AutoRotatePeriodSec <= 0 {
-			continue
+		if ring.AutoRotatePeriodSec <= 0 || ring.state() != StateActive {
+			continue // 자동 회전은 active 키만
 		}
 		elapsedMs := nowMs - ring.LastRotatedAt.UnixMilli()
 		if elapsedMs >= int64(ring.AutoRotatePeriodSec)*1000 {

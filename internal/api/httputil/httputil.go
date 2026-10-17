@@ -77,6 +77,7 @@ func WriteJSONError(w http.ResponseWriter, status int, message string) {
 //
 //   - keys.ErrAlreadyExists                             -> 409 key_exists
 //   - keys.ErrKeyNotActive                              -> 409 key_not_active
+//   - keys.ErrKeyProtected / keys.ErrInvalidState       -> 409 key_protected / invalid_state
 //   - keys.ErrBackend                                   -> 503 backend_unavailable
 //   - barrier.ErrRootVerification                       -> 400 root_verification_failed
 //   - barrier.ErrInitialized                            -> 409 already_initialized
@@ -97,6 +98,10 @@ func WriteError(w http.ResponseWriter, err error, fallbackStatus int) {
 		WriteAPIError(w, http.StatusConflict, "key_exists", "key already exists", "")
 	case errors.Is(err, keys.ErrKeyNotActive):
 		WriteAPIError(w, http.StatusConflict, "key_not_active", "the key is not active", "enable the key or use another key")
+	case errors.Is(err, keys.ErrKeyProtected):
+		WriteAPIError(w, http.StatusConflict, "key_protected", "the key is protected and cannot be disabled or deleted", "protected keys are required by the KMS v2 path or KMS_PROTECTED_KEYS")
+	case errors.Is(err, keys.ErrInvalidState):
+		WriteAPIError(w, http.StatusConflict, "invalid_state", "the key state does not allow this operation", "")
 	case errors.Is(err, keys.ErrBackend):
 		WriteAPIError(w, http.StatusServiceUnavailable, "backend_unavailable", "key backend unavailable", "retry later")
 	case errors.Is(err, barrier.ErrRootVerification):
@@ -137,7 +142,7 @@ func WriteError(w http.ResponseWriter, err error, fallbackStatus int) {
 func IsDomainError(err error) bool {
 	var notFound *keys.KeyNotFoundError
 	var policyErr *keys.KeyPolicyError
-	return errors.Is(err, keys.ErrAlreadyExists) || errors.Is(err, keys.ErrKeyNotActive) || errors.Is(err, keys.ErrBackend) ||
+	return errors.Is(err, keys.ErrAlreadyExists) || errors.Is(err, keys.ErrKeyNotActive) || errors.Is(err, keys.ErrKeyProtected) || errors.Is(err, keys.ErrInvalidState) || errors.Is(err, keys.ErrBackend) ||
 		errors.Is(err, barrier.ErrRootVerification) || errors.Is(err, barrier.ErrInitialized) || errors.Is(err, barrier.ErrSealed) ||
 		errors.As(err, &notFound) || errors.As(err, &policyErr)
 }

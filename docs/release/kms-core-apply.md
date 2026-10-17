@@ -1,15 +1,16 @@
-# KMS 본체 묶음 적용 절차서 (TPM 봉인 + C+B 키 소유 + 감사 + 오류 형식 + 키 삭제)
+# KMS 본체 묶음 적용 절차서 (C+B 키 소유 + 감사 + 오류 형식 + 키 삭제)
 
-> **경고 — 먼저 읽으세요.** 이 절차는 KMS를 재시작합니다(핵심 재시작 1회 + TPM 자동 해제 확인용 1회).
+> **경고 — 먼저 읽으세요.** 이 절차는 KMS를 **재시작 1회** 합니다.
 > KMS가 재시작되면 **봉인(sealed) 상태**로 뜨고, **Shamir 조각 3개를 입력**하기 전까지 **클러스터 Secret 읽기가 중단**됩니다.
 > 조각 보유자 3명이 **같은 자리에 있을 때** 시작하세요. 4단계의 재시작 직후 바로 조각이 필요합니다.
 >
-> 두 번째 재시작(7단계)은 TPM 자동 해제가 **실패해도** 조각 3개로 해제할 수 있어야 하므로 조각 3명이 끝까지 대기합니다.
+> **TPM 봉인은 이번 적용에 포함하지 않습니다**(배포 보류, ADR-010). `seal-migrate`를 실행하지 않으므로 init 기록은 **v1로 남고**,
+> 이전 서버 이미지로 되돌릴 수 있습니다(아래 "되돌리기").
 
 대상: 단일 노드(OCI) 운영 클러스터. 이 문서의 명령은 서버에서 사람이 그대로 실행하도록 썼고, 작성 시점에는 운영 서버에서 실행하지 않았습니다.
 각 단계의 **확인**을 통과한 뒤 다음으로 가세요. 막히면 해당 단계의 **되돌리기**를 따르고 그 뒤 단계로 가지 않습니다.
 
-관련 문서: TPM 세부는 [tpm-seal.md](tpm-seal.md), 설계 근거는 `docs/decisions.md` ADR-009~012.
+관련 문서: 설계 근거는 `docs/decisions.md` ADR-009·011·012. TPM(보류)은 [tpm-seal.md](tpm-seal.md).
 
 ## 이 적용이 바꾸는 것
 
@@ -19,18 +20,16 @@
 | Transit 비동기 감사 | 새 호스트 디렉터리 필요. 켜면 키 이름·주체·결과가 파일에 남는다 (본문 미기록) |
 | 오류 응답 `{error,message,hint}` | 상태 코드는 같다. 오류 **본문**을 문자열로 파싱하는 외부 코드가 있으면 확인 |
 | 키 삭제(disable → schedule-deletion → 삭제) | 새 관리 API. 기존 키는 모두 active로 읽힌다. KMS v2 키는 자동 보호 |
-| 관리 소켓 `seal-profile`, `seal-migrate` | 관리 화면용 |
-| TPM 봉인 (ADR-010) | 마지막에 `seal-migrate`로 전환 |
+| 관리 소켓 `seal-profile` | 관리 화면용. `seal-migrate`는 코드에 있지만 **실행하지 않는다** (서버가 `KMS_SEAL_ALLOWED=shamir`라 target=tpm은 403) |
 
-**저장 형식 변경과 되돌리기 한계 (중요):**
+**저장 형식 변경과 되돌리기:**
 - 키 저장 형식: `State`/`DeletionDate` 필드가 *추가*되었을 뿐이고, 필드가 없는 기존 키는 active로 읽힌다. 새 코드는 기존 운영 데이터를 그대로 읽는다.
-- init 기록: `seal-migrate`(7단계)를 실행하면 `format_version 2`로 바뀐다. **이후에는 이전 서버 이미지가 이 저장소를 읽지 못하고 기동을 거부한다**
-  (fail-closed). 그러므로 7단계 *이전*에는 이전 이미지로 되돌릴 수 있지만, 7단계 *이후*에는 되돌리려면 정지 백업 복원이 필요하다.
-  새 코드는 4단계 재시작만으로는 기록을 바꾸지 않는다(v1 그대로 읽는다).
+- init 기록: 이번 적용은 `seal-migrate`를 실행하지 않으므로 **v1로 남는다.** 새 코드가 v1을 그대로 읽고, 기록을 v2로 바꾸는 것은 `seal-migrate`뿐이다
+  (조각 재발급 `target=shamir`도 v2로 올리므로 **이 적용 동안 실행하지 않는다**). 따라서 **이전 서버 이미지로 되돌릴 수 있다.**
 
 ## 0. 준비 (서비스 영향 없음)
 
-1. 새 이미지 빌드·digest 확정 (`SERVER_IMAGE`, `ADMIN_IMAGE`, 변경된 경우 `DEMO_IMAGE`/`BENCH_IMAGE`), 릴리스 값 JSON에 `TPM_GROUP_GID` 추가 (2번 이후에 값 확인).
+1. 새 이미지 빌드·digest 확정 (`SERVER_IMAGE`, `ADMIN_IMAGE`, 변경된 경우 `DEMO_IMAGE`/`BENCH_IMAGE`). 릴리스 값 JSON의 키 목록은 `release-values.example.json`과 같다(TPM 관련 입력 없음).
 2. 호스트 디렉터리 (Transit 감사용, KMS 컨테이너는 uid/gid 10001):
 
 ```bash
@@ -38,16 +37,13 @@ sudo install -d -o 10001 -g 10001 -m 0700 /var/lib/custom-kms/transit-audit
 ls -ld /var/lib/custom-kms/transit-audit       # 확인: drwx------ 10001 10001
 ```
 
-3. swtpm·udev 준비: **[tpm-seal.md](tpm-seal.md)의 1~2단계**를 그대로 수행한다 (swtpm 설치, `tpm_vtpm_proxy` 부팅 자동 로드, systemd 서비스, udev 규칙, `/dev/tpmrm0` 확인, gid 확인).
-   이 단계는 KMS를 건드리지 않는다. 확인: `ls -l /dev/tpmrm0` → `crw-rw---- root tss`, `getent group tss | cut -d: -f3`로 gid를 얻어 릴리스 값에 넣는다.
-   되돌리기: `sudo systemctl disable --now swtpm-kms` 및 만든 파일 삭제.
-4. 새 매니페스트 렌더 (적용하지 않는다, 결과는 커밋하지 않는다):
+3. 새 매니페스트 렌더 (적용하지 않는다, 결과는 커밋하지 않는다):
 
 ```bash
 OUT=/root/release-core-$(date -u +%Y%m%dT%H%MZ)
 python3 scripts/render-release.py --values <비밀 없는 릴리스 값.json> --output $OUT
 sudo diff /etc/kubernetes/manifests/kms-static-pod.yaml $OUT/kms-static-pod.yaml
-# 확인: 차이는 이미지, KMS_SEAL_ALLOWED/KMS_TPM_DEVICE/KMS_TRANSIT_AUDIT_DIR, supplementalGroups, tpm·transit-audit 볼륨뿐
+# 확인: 차이는 이미지, KMS_SEAL_TYPE→KMS_SEAL_ALLOWED(`shamir`), KMS_TRANSIT_AUDIT_DIR, transit-audit 볼륨뿐
 ```
 
 ## 1. 정지 백업 (기준점)
@@ -139,14 +135,14 @@ sudo python3 scripts/host-unseal.py
 ```bash
 SOCK=/run/custom-kms/admin/admin.sock
 sudo curl -sS --unix-socket $SOCK http://localhost/v1/sys/seal-status
-# 확인: "sealed":false, "seal_type":"shamir"   (아직 shamir — TPM 전환은 7단계)
+# 확인: "sealed":false, "seal_type":"shamir", "recovery_available":false
 sudo curl -sS --unix-socket $SOCK http://localhost/v1/sys/seal-profile
 # 확인: Type "shamir"
 sudo kubectl --kubeconfig=/etc/kubernetes/admin.conf get --raw '/readyz?verbose' | grep kms
 # 확인: kms 항목 ok (이름 예: kms-provider-0)
 ```
 
-되돌리기(7단계 이전이므로 가능): 1단계 백업의 매니페스트로 복원하고 조각 3개로 해제.
+되돌리기: 1단계 백업의 매니페스트로 복원하고 조각 3개로 해제.
 
 ```bash
 sudo install -m 0600 /var/backups/custom-kms/$ID/manifests/kms-static-pod.yaml /etc/kubernetes/manifests/.kms-static-pod.yaml.new
@@ -208,65 +204,24 @@ sudo curl -sS --unix-socket $SOCK -XPOST http://localhost/v1/keys/apply-check/ca
 `apply-check` 키는 남겨 두어도 무해하다(다시 `schedule-deletion`을 걸면 7일 뒤 삭제 작업이 도는지 확인할 수 있다).
 관리 감사 확인: `sudo tail -n 6 /var/lib/custom-kms/core-audit/$(date -u +%F).jsonl` → `POST /v1/keys/disable` 등에 `"key":"apply-check"`.
 
-되돌리기: 5단계 중 실패가 있으면 7단계로 가지 말고 4단계의 되돌리기를 따른다.
+되돌리기: 5단계 중 실패가 있으면 4단계의 되돌리기를 따른다.
 
 ## 6. 정리 확인 (선택, 하루 정도 지켜본 뒤)
 
 - 기존 네임스페이스 Role/RoleBinding(전역 키용)은 새 규칙에서 효력이 없다. **지우지 않고 둔다**(되돌리기 대비). 정리는 별도 판단.
 - 2단계 표를 다시 뽑아 "사라짐"이 모두 "이전됨"으로 바뀌었는지 확인: `kubectl get ... -o json > /root/rbac-after.json && python3 scripts/migrate-rbac-cb.py check --input /root/rbac-after.json`.
 
-## 7. TPM으로 전환 (seal-migrate) → 재시작 → 자동 해제 확인
+## 되돌리기 (이전 서버 이미지로)
 
-**5단계를 모두 통과한 뒤에만.** 이 단계 이후 이전 서버 이미지로는 되돌릴 수 없다(위 "저장 형식 변경" 참고).
-
-```bash
-sudo sh -c 'umask 077; curl -sS -o /dev/shm/seal-migrate.json -w "%{http_code}\n" \
-  --unix-socket /run/custom-kms/admin/admin.sock -X POST -H "Content-Type: application/json" \
-  -d "{\"target\":\"tpm\"}" http://localhost/v1/sys/seal-migrate'
-# 확인: 200   (아니면 오류 본문을 보고 멈춤: sudo python3 -c 'import json;print(json.load(open("/dev/shm/seal-migrate.json")).get("error"))' → sudo shred -u /dev/shm/seal-migrate.json)
-sudo python3 - <<'PY'
-import json
-d = json.load(open('/dev/shm/seal-migrate.json'))
-print(d['message'])
-for i, s in enumerate(d['shares'], 1):
-    print(f'--- share {i}/{len(d["shares"])} ---'); print(s)
-PY
-sudo shred -u /dev/shm/seal-migrate.json; clear
-```
-
-복구 조각 5개를 서로 다른 보관자에게 전달한다. **이전 조각 묶음과 섞어 쓰지 않는다**(같은 루트 키지만 한 묶음에서 3개). 오류 표와 세부 설명은 [tpm-seal.md](tpm-seal.md) 5단계.
-
-KMS 재시작 → **조각 입력 없이** 해제되는지 확인:
-
-```bash
-sudo mv /etc/kubernetes/manifests/kms-static-pod.yaml /var/lib/custom-kms/kms-static-pod.yaml.held
-sleep 20
-start=$(date +%s)
-sudo mv /var/lib/custom-kms/kms-static-pod.yaml.held /etc/kubernetes/manifests/kms-static-pod.yaml
-for i in $(seq 1 150); do
-  r=$(sudo curl -sS --unix-socket $SOCK http://localhost/v1/sys/seal-status 2>/dev/null)
-  case "$r" in *'"sealed":false'*) echo "auto-unseal OK after $(( $(date +%s) - start ))s"; break;; esac
-  sleep 2
-done; echo "$r"
-# 확인: "sealed":false, "seal_type":"tpm", "recovery_available":true  — host-unseal.py를 실행하지 않았음
-sudo curl -sS --unix-socket $SOCK http://localhost/v1/sys/seal-profile     # 확인: Type "tpm", AutoUnsealCapable true
-sudo kubectl --kubeconfig=/etc/kubernetes/admin.conf get --raw '/readyz?verbose' | grep kms
-sudo kubectl --kubeconfig=/etc/kubernetes/admin.conf get secrets -A --no-headers | wc -l
-```
-
-sealed로 남으면(설계된 동작): 조각 3개로 `host-unseal.py`를 실행해 먼저 서비스를 복구한 뒤 원인을 본다.
-`permission denied`/`operation not permitted`면 tpm-seal.md "알려진 위험" 1번(컨테이너의 장치 접근) — `seal-migrate` 자체는 이 경우 503으로 **실패하고 아무것도 바꾸지 않는다**.
-
-(선택) 호스트 재부팅 후 자동 복구 시간 측정은 [tpm-seal.md](tpm-seal.md) 5단계 끝.
-
-**되돌리기(7단계)**: `seal-migrate {"target":"shamir"}` → 새 조각 보관 → swtpm 서비스 정리 (tpm-seal.md 6단계). 이 되돌리기는 봉인 *방식*만 Shamir로 바꾸며
-init 기록은 v2로 남는다(이전 이미지 복귀는 여전히 불가 — 정지 백업 복원만).
-
-## 전체 되돌리기 요약
+이번 적용은 init 기록을 v1로 남기므로 이전 이미지로 되돌릴 수 있다. 4단계의 되돌리기 명령(백업의 매니페스트로 static pod 복원 → 조각 3개 해제)을 쓴다.
 
 | 시점 | 방법 |
 |---|---|
 | 0~3단계 | 각 단계의 되돌리기 (서비스 영향 없음) |
-| 4~6단계 | 백업 매니페스트로 static pod 복원 + 조각 3개 해제. 새 ClusterRole은 남겨도 무해 |
-| 7단계 이후 | 방식만 되돌리려면 `seal-migrate shamir`. **이전 이미지로 복귀하려면 정지 백업 복원**(init 기록 v2 때문) — `scripts/restore-kms.py` 절차(recovery.md) |
+| 4~6단계 | 백업 `<ID>/manifests/kms-static-pod.yaml`로 static pod 복원 + 조각 3개 해제. 새 ClusterRole은 남겨도 무해 |
+| 이전 이미지가 읽는 데이터 | 키 저장소·init 기록(v1) 모두 읽힌다 |
 | 키 삭제 기능으로 상태를 바꾼 뒤 이전 이미지로 복귀 | 이전 이미지는 `State`를 모르므로 disabled/pending 키를 active로 취급하고 자동 삭제도 하지 않는다. 복귀 전에 모든 키를 `enable` 해 두는 것이 안전하다 |
+| Transit 감사 | 이전 이미지는 `KMS_TRANSIT_AUDIT_DIR`을 모르므로 무시한다(파일은 남는다) |
+| 최후 수단 | 정지 백업 복원 — `scripts/restore-kms.py` 절차(recovery.md) |
+
+> 만약 실수로 `seal-migrate`(조각 재발급 포함)를 실행했다면 init 기록이 v2가 되어 이전 이미지는 기동을 거부한다. 그때는 정지 백업 복원이 필요하다.

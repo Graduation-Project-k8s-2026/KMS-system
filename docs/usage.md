@@ -44,6 +44,12 @@ go run ./cmd/admin-api
 | `KMS_SHAMIR_THRESHOLD` | 3 | 복원에 필요한 조각 수 |
 | `KMS_TPM_SIMULATOR` | false | TPM 시뮬레이터 사용 |
 | `KMS_TPM_DEVICE` | `/dev/tpmrm0` | 실제 TPM 장치 경로 |
+| `KMS_SEAL_ALLOWED` | `shamir,tpm` | 운영 서버의 허용 봉인 방식(실제 방식은 init 기록이 정함, ADR-010) |
+| `KMS_TRANSIT_AUDIT_DIR` | (비움=끔) | Transit 요청 비동기 감사 파일 디렉터리 (키 이름·주체·결과·지연; 본문 미기록) |
+| `KMS_TRANSIT_AUDIT_BUFFER` | 8192 | 감사 버퍼 크기. 가득 차면 요청을 막지 않고 버리며 `kms_audit_dropped_total`이 오른다 |
+| `KMS_TRANSIT_AUDIT_FSYNC_MS` | 1000 | 감사 fsync 주기(ms) |
+| `KMS_PROTECTED_KEYS` | (비움) | 비활성화·삭제 예약을 거부할 키 목록(쉼표). KMS v2 키(`KMS_V2_KEY_NAME`)는 자동 보호 |
+| `KMS_KEY_REAPER_INTERVAL_SEC` | 600 | 삭제 유예가 끝난 키를 점검하는 주기(초) |
 | `KMS_STORAGE` | `file` | 저장 백엔드: `memory`\|`file` |
 | `KMS_DATA_DIR` | `./data` | file 저장소 경로 |
 | `KMS_TRANSIT_ADDR` | `:8200` | Transit 리스너 주소 (`PORT`도 하위호환 인식) |
@@ -158,6 +164,29 @@ curl --unix-socket $SOCK http://localhost/v1/keys/demo
 }
 ```
 
+### 키 수명 주기 — 사용 중지 → 삭제 예약 → 삭제
+
+키를 곧바로 지우면 그 키로 암호화한 데이터를 영구히 못 푼다. 그래서 단계를 둔다 (관리 소켓 전용).
+조회 응답에 `state`(`active`\|`disabled`\|`pending_deletion`)와 `deletion_date`가 들어간다.
+
+```bash
+curl --unix-socket $SOCK -XPOST http://localhost/v1/keys/demo/disable          # 사용 중지
+curl --unix-socket $SOCK -XPOST http://localhost/v1/keys/demo/enable           # 다시 사용
+curl --unix-socket $SOCK -XPOST http://localhost/v1/keys/demo/schedule-deletion \
+  -H 'content-type: application/json' -d '{"pending_days": 14}'                # 7~30일(기본 30), deletion_date 반환
+curl --unix-socket $SOCK -XPOST http://localhost/v1/keys/demo/cancel-deletion  # 취소 → disabled (다시 쓰려면 enable)
+```
+
+`disabled`/`pending_deletion` 키의 encrypt/decrypt/rewrap은 `409 key_not_active`이고 자동 회전도 건너뛴다.
+유예가 지나면 백그라운드 작업이 키 자료를 삭제한다(되돌릴 수 없음, 관리 감사에 기록, 봉인 해제 상태에서만).
+KMS v2 키와 `KMS_PROTECTED_KEYS`의 키는 `409 key_protected`로 거부된다.
+
+### 오류 응답 형식
+
+모든 오류는 `{"error":"<기계용 코드>","message":"<사람용 설명>","hint":"<선택>"}` JSON이다(상태 코드는 그대로).
+키 이름·버전 숫자는 응답에 넣지 않는다(예: 최소 복호화 버전 거부는 `version_not_allowed`, 상세는 감사 로그에만).
+본문이 2 MiB를 넘으면 `413 {"error":"payload_too_large","limit_bytes":...}`.
+
 ### 암복호화
 
 ```bash
@@ -253,7 +282,8 @@ KMS_AUTHZ=on KMS_KUBECONFIG=/path/to/kubeconfig \
 ... go run ./cmd/server
 ```
 
-관리자가 `kubectl`로 권한을 정의한다.
+관리자가 `kubectl`로 권한을 정의한다. 키 소유 규칙(C+B, ADR-009): `<ns>.<name>` 키는 `<ns>`
+네임스페이스의 Role/RoleBinding, 점 없는 전역 키는 ClusterRole/ClusterRoleBinding으로만 허용된다.
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -264,7 +294,7 @@ metadata:
 rules:
 - apiGroups: ["kms.local"]
   resources: ["keys"]
-  resourceNames: ["demo"]
+  resourceNames: ["team-a.demo"]    # team-a 소유 키
   verbs: ["encrypt"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

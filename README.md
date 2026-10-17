@@ -428,15 +428,22 @@ KMS의 개념을 쿠버네티스 RBAC 어휘로 옮깁니다. 아래는 실제�
 | 리소스 종류 | `keys` |
 | 키 이름 | `resourceNames` |
 | 동작 | verb: `encrypt`, `decrypt`, `rewrap` |
-| 스코프 | 네임스페이스(요청자의 namespace 기준) |
+| 스코프 | 키 이름이 `<ns>.<name>`이면 `<ns>` 네임스페이스(소유 팀), 점이 없으면 클러스터 범위 |
 
-> **네임스페이스 스코프의 의미.** 키 저장소 자체에는 네임스페이스 개념이
-> 없습니다 — 키는 클러스터 전역으로 하나의 목록입니다. 네임스페이스는
-> **접근 권한 판단에만** 쓰입니다. 즉 "team-a의 demo 키"가 따로 존재하는
-> 게 아니라, "demo 키에 대한 team-a 소속 요청자의 권한"을 SAR에 묻는
-> 것입니다. 같은 `demo` 키를 여러 네임스페이스의 ServiceAccount가 서로
-> 다른 권한으로(예: team-a는 encrypt+decrypt, team-b는 encrypt만) 쓸 수
-> 있습니다.
+> **네임스페이스 스코프의 의미 (C+B 키 소유 모델, ADR-009).** 판단 네임스페이스는
+> "요청한 ServiceAccount의 네임스페이스"가 **아니라 키 이름이 정합니다.**
+>
+> - `team-a.payment`처럼 이름에 점이 하나 있는 키는 `team-a` **소유**입니다.
+>   SAR의 namespace는 `team-a`, resourceName은 키 전체 이름이고, **`team-a`
+>   네임스페이스의 Role/RoleBinding만** 효력이 있습니다. 다른 네임스페이스의
+>   ServiceAccount도 소유 팀이 자기 RoleBinding의 subjects에 넣어 주면 쓸 수 있습니다.
+> - 점이 없는 키(예: `demo`)는 **클러스터 전역 키**입니다. SAR을 namespace 없이
+>   보내므로 `ClusterRole`+`ClusterRoleBinding`으로만 허용됩니다.
+>   네임스페이스 Role/RoleBinding은 전역 키에 효력이 없습니다(403).
+> - 키 이름 규칙: `<ns>`는 DNS-1123 label, 점은 최대 1개. 기존 키(점 없음)는 그대로 유효합니다.
+>
+> 이전 규칙(요청자 네임스페이스 기준)에서 옮겨 오려면 `scripts/migrate-rbac-cb.py`를 쓰세요
+> (`docs/release/kms-core-apply.md`).
 
 `seal-profile`/`seal-benchmark`은 인가 대상에서 제외합니다 — 특정 키를
 대상으로 하지 않는 진단용 엔드포인트이고, 애초에 이 둘을 Admin이 아닌
@@ -446,36 +453,67 @@ Transit에 둔 이유가 벤치마크 실행기(Job) 같은 호출자가 키 관
 
 #### Role/RoleBinding 예시
 
+팀 소유 키 `team-a.payment` — `team-a` 네임스페이스의 Role/RoleBinding:
+
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: kms-demo-key-user
+  name: kms-payment-user
   namespace: team-a
 rules:
 - apiGroups: ["kms.local"]
   resources: ["keys"]
-  resourceNames: ["demo"]
+  resourceNames: ["team-a.payment"]
   verbs: ["encrypt", "decrypt"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: kms-demo-key-user-binding
+  name: kms-payment-user-binding
   namespace: team-a
 subjects:
 - kind: ServiceAccount
   name: app-workload
   namespace: team-a
+- kind: ServiceAccount        # 다른 네임스페이스의 SA도 소유 팀이 허용하면 쓸 수 있다
+  name: batch
+  namespace: team-b
 roleRef:
   kind: Role
-  name: kms-demo-key-user
+  name: kms-payment-user
   apiGroup: rbac.authorization.k8s.io
 ```
 
-이 Role/RoleBinding이 있으면 `team-a` 네임스페이스의 `app-workload`
-ServiceAccount는 `demo` 키에 `encrypt`/`decrypt`만 할 수 있고, `rewrap`이나
-다른 키에는 여전히 403을 받습니다.
+전역 키 `demo` — 클러스터 범위 ClusterRole/ClusterRoleBinding (이름 규칙 `kms-cb-<키>-<verbs>`):
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kms-cb-demo-decrypt-encrypt
+rules:
+- apiGroups: ["kms.local"]
+  resources: ["keys"]
+  resourceNames: ["demo"]
+  verbs: ["decrypt", "encrypt"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kms-cb-demo-decrypt-encrypt
+subjects:
+- kind: ServiceAccount
+  name: app-workload
+  namespace: team-a
+roleRef:
+  kind: ClusterRole
+  name: kms-cb-demo-decrypt-encrypt
+  apiGroup: rbac.authorization.k8s.io
+```
+
+첫 예시에서 `app-workload`는 `team-a.payment`에 `encrypt`/`decrypt`만 할 수 있고 `rewrap`이나
+다른 키에는 403을 받습니다. `demo`처럼 점 없는 키에 **네임스페이스 Role**만 있으면 403입니다.
 
 #### 환경변수
 

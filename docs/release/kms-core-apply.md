@@ -1,4 +1,4 @@
-# KMS 본체 묶음 적용 절차서 (C+B 키 소유 + 감사 + 오류 형식 + 키 삭제)
+# KMS 본체 묶음 적용 절차서 — 1단계 + 2단계 (재시작 1회)
 
 > **경고 — 먼저 읽으세요.** 이 절차는 KMS를 **재시작 1회** 합니다.
 > KMS가 재시작되면 **봉인(sealed) 상태**로 뜨고, **Shamir 조각 3개를 입력**하기 전까지 **클러스터 Secret 읽기가 중단**됩니다.
@@ -10,7 +10,8 @@
 대상: 단일 노드(OCI) 운영 클러스터. 이 문서의 명령은 서버에서 사람이 그대로 실행하도록 썼고, 작성 시점에는 운영 서버에서 실행하지 않았습니다.
 각 단계의 **확인**을 통과한 뒤 다음으로 가세요. 막히면 해당 단계의 **되돌리기**를 따르고 그 뒤 단계로 가지 않습니다.
 
-관련 문서: 설계 근거는 `docs/decisions.md` ADR-009·011·012. TPM(보류)은 [tpm-seal.md](tpm-seal.md).
+포함: 1단계(C+B 키 소유, Transit 감사, 오류 형식, 키 삭제) + 2단계(data key API, TLS 인증서 무중단 교체, 외부 사용자 경로 ③).
+관련 문서: 설계 근거는 `docs/decisions.md` ADR-009·011·012·013·014·015. TPM(보류)은 [tpm-seal.md](tpm-seal.md).
 
 ## 이 적용이 바꾸는 것
 
@@ -20,6 +21,9 @@
 | Transit 비동기 감사 | 새 호스트 디렉터리 필요. 켜면 키 이름·주체·결과가 파일에 남는다 (본문 미기록) |
 | 오류 응답 `{error,message,hint}` | 상태 코드는 같다. 오류 **본문**을 문자열로 파싱하는 외부 코드가 있으면 확인 |
 | 키 삭제(disable → schedule-deletion → 삭제) | 새 관리 API. 기존 키는 모두 active로 읽힌다. KMS v2 키는 자동 보호 |
+| data key API (ADR-013) | `POST /v1/datakey/{name}` 신규 verb `datakey` (C+B 규칙 그대로). 기존 권한에는 영향 없음 |
+| TLS 무중단 교체 (ADR-015) | 이후 인증서 파일을 바꾸면 재시작 없이 30초 이내 반영. 이번 재시작이 마지막 인증서 때문의 재시작이다 |
+| 외부 경로 ③ (ADR-014) | `0.0.0.0:9443` 리스너가 **켜진다**. 인터넷에 닿으려면 OCI 방화벽을 사람이 열어야 하므로(6단계, 점검 통과 후) 재시작만으로는 외부에 노출되지 않는다 |
 | 관리 소켓 `seal-profile` | 관리 화면용. `seal-migrate`는 코드에 있지만 **실행하지 않는다** (서버가 `KMS_SEAL_ALLOWED=shamir`라 target=tpm은 403) |
 
 **저장 형식 변경과 되돌리기:**
@@ -37,14 +41,28 @@ sudo install -d -o 10001 -g 10001 -m 0700 /var/lib/custom-kms/transit-audit
 ls -ld /var/lib/custom-kms/transit-audit       # 확인: drwx------ 10001 10001
 ```
 
-3. 새 매니페스트 렌더 (적용하지 않는다, 결과는 커밋하지 않는다):
+3. (외부 경로를 쓸 경우) **Transit 인증서 SAN에 외부 접속 주소 추가.** 외부 사용자는 `<공인 주소>`(또는 DNS 이름)로 접속하므로 SAN에 있어야 TLS 검증이 통과한다.
+   재시작 **전에 해도 된다**(옛 서버도 시작 시 읽은 인증서를 계속 쓰고, 새 서버는 파일 교체를 30초 이내에 다시 읽는다 — 그래서 순서와 무관).
+   공인 주소는 이 명령의 인자로만 쓰고 파일·문서에 적지 않는다.
+
+```bash
+sudo scripts/reissue-transit-cert.sh --ca-cert <내부 CA 인증서 경로> --ca-key <내부 CA 키 경로> \
+  --add-ip <공인 주소> --add-dns <공개 DNS 이름(있다면)> --plan        # 먼저 --plan으로 새 SAN 확인
+sudo scripts/reissue-transit-cert.sh --ca-cert <내부 CA 인증서 경로> --ca-key <내부 CA 키 경로> --add-ip <공인 주소>   # [y/N]에 y
+# 확인: 마지막에 출력되는 SAN에 기존 항목(kms-transit 등, 127.0.0.1, 노드 IP)과 새 주소가 모두 있고 notAfter가 충분히 먼 미래
+```
+
+   되돌리기: `$TLS_DIR/backup-<시각>/`의 `tls.crt`, `tls.key`를 같은 디렉터리로 복사(임시 이름 → `mv`).
+   **주의: 사설망 클라이언트(Pod 등)가 쓰는 CA는 그대로**이므로 클라이언트 신뢰 설정은 바꿀 필요가 없다.
+4. 새 매니페스트 렌더 (static pod 외 구성용; 적용하지 않는다, 결과는 커밋하지 않는다):
 
 ```bash
 OUT=/root/release-core-$(date -u +%Y%m%dT%H%MZ)
 python3 scripts/render-release.py --values <비밀 없는 릴리스 값.json> --output $OUT
-sudo diff /etc/kubernetes/manifests/kms-static-pod.yaml $OUT/kms-static-pod.yaml
-# 확인: 차이는 이미지, KMS_SEAL_TYPE→KMS_SEAL_ALLOWED(`shamir`), KMS_TRANSIT_AUDIT_DIR, transit-audit 볼륨뿐
 ```
+
+   **KMS static pod는 렌더 결과로 교체하지 않는다.** 운영 파일에는 템플릿에 없는 `tmp` emptyDir와 `resources`가 있고 flow 스타일 YAML이라 렌더하면 차이가 커진다.
+   4단계에서 `scripts/patch-kms-manifest.py`로 **현재 파일을 부분 수정**한다.
 
 ## 1. 정지 백업 (기준점)
 
@@ -92,38 +110,71 @@ sudo kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f /root/rbac-cb.yaml
 `generate`는 파일만 만들고, 기존 Role/RoleBinding은 지우지 않는다. 새 ClusterRole은 **현재(옛) 서버에서도 무해**하므로 지금 적용해도 서비스에 영향이 없다.
 `campus-store`는 `deploy/campus-store/deploy.py`가 같은 이름(`kms-cb-campus-shipping-<verb>`)으로 만들므로 나중에 재배포해도 일치한다.
 
-확인 (ClusterRoleBinding이 적용됐는지; 옛 서버와 무관하게 apiserver 레벨 확인):
+**이미 적용됐으면 건너뜀**: 운영에는 이미 ClusterRole/ClusterRoleBinding 4쌍(`kms-cb-campus-shipping-decrypt/encrypt/rewrap`, `kms-cb-demo-decrypt-encrypt-rewrap`)이 적용되어 있다.
+이 경우 `check`가 해당 권한을 "이전됨"으로 표시하고 `generate`는 "0쌍 생성"을 출력한다 — **0쌍이면 `apply`를 하지 않는다**(빈 파일 apply는 오류). 위 4쌍이 모두 있는지:
 
 ```bash
-sudo kubectl --kubeconfig=/etc/kubernetes/admin.conf auth can-i encrypt keys.kms.local/demo --as=system:serviceaccount:kms-demo:app-a
-# 확인: yes     (클러스터 범위 질의 — namespace를 주지 않으므로 ClusterRoleBinding만 해당)
-sudo kubectl --kubeconfig=/etc/kubernetes/admin.conf auth can-i encrypt keys.kms.local/campus-shipping --as=system:serviceaccount:campus-store:checkout
-# 확인: yes
-sudo kubectl --kubeconfig=/etc/kubernetes/admin.conf auth can-i encrypt keys.kms.local/campus-shipping --as=system:serviceaccount:kms-demo:app-a
-# 확인: no      (시연용 "권한 없음"이 그대로)
+sudo kubectl --kubeconfig=/etc/kubernetes/admin.conf get clusterrole,clusterrolebinding -o name | grep kms-cb-
+# 확인: clusterrole/clusterrolebinding 각각 4개
 ```
 
-(`kms.local/keys`는 apiserver에 없는 가상 리소스라 kubectl이 "resource type" 경고를 낼 수 있다. 기준은 마지막 줄의 yes/no 답이다. 작성 시점에 실제 클러스터에서 이 명령을 실행해 보지 못했다.)
+확인은 `kubectl auth can-i`를 쓰지 않는다. `kms.local/keys`는 apiserver에 없는 가상 리소스라 `can-i`가 제대로 질의하지 못한다
+(운영에서 전부 "no"가 나왔다). 대신 **SubjectAccessReview를 직접 보낸다** — KMS가 실제로 하는 질의와 같다. namespace를 주지 않으면 클러스터 범위 질의다
+(전역 키는 ClusterRoleBinding만 효력):
+
+```bash
+sar() {  # sar <사용자> <verb> <키 이름> [namespace]  → true/false
+  sudo kubectl --kubeconfig=/etc/kubernetes/admin.conf create -o jsonpath='{.status.allowed}' -f - <<YAML
+apiVersion: authorization.k8s.io/v1
+kind: SubjectAccessReview
+spec:
+  user: $1
+  resourceAttributes: {group: kms.local, resource: keys, verb: $2, name: $3${4:+, namespace: $4}}
+YAML
+  echo
+}
+sar system:serviceaccount:kms-demo:app-a encrypt demo                      # 확인: true
+sar system:serviceaccount:kms-bench:bench-transit encrypt demo             # 확인: true
+sar system:serviceaccount:campus-store:checkout encrypt campus-shipping    # 확인: true
+sar system:serviceaccount:kms-demo:app-a encrypt campus-shipping           # 확인: false  (시연용 "권한 없음"이 그대로)
+```
+
+(운영에서 위 방식으로 확인한 결과: 클러스터 범위 질의에서 app-a·bench-transit의 demo encrypt, checkout의 campus-shipping encrypt는 true, app-a의 campus-shipping은 false.)
 
 되돌리기: `sudo kubectl --kubeconfig=/etc/kubernetes/admin.conf delete -f /root/rbac-cb.yaml` (기존 Role은 그대로 남아 있어 옛 서버 권한에는 영향 없음).
 
 ## 4. 새 이미지·매니페스트 교체 → 재시작 (여기서 봉인됨)
 
-1. 보조 구성 요소부터(KMS 무관): 렌더된 `serviceaccounts-rbac.yaml`, 변경된 이미지의 `admin-deployment.yaml`/`demo-app.yaml`을 적용한다.
+1. 보조 구성 요소부터(KMS 무관): 외부 사용자 네임스페이스, 렌더된 RBAC, 변경된 이미지의 Deployment를 적용한다.
 
 ```bash
-sudo kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f $OUT/serviceaccounts-rbac.yaml
-sudo kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f $OUT/admin-deployment.yaml     # ADMIN_IMAGE 변경 시
-sudo kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f $OUT/demo-app.yaml             # DEMO_IMAGE 변경 시
-sudo kubectl --kubeconfig=/etc/kubernetes/admin.conf -n kms-system rollout status deployment/kms-admin --timeout=150s
+K="sudo kubectl --kubeconfig=/etc/kubernetes/admin.conf"
+$K apply -f $OUT/kms-external.yaml                                   # Namespace kms-external (사용자별 리소스는 6단계에서 스크립트가)
+$K apply -f $OUT/serviceaccounts-rbac.yaml
+$K apply -f $OUT/admin-deployment.yaml                               # ADMIN_IMAGE 변경 시
+$K apply -f $OUT/demo-app.yaml                                       # DEMO_IMAGE 변경 시
+$K -n kms-system rollout status deployment/kms-admin --timeout=150s
 ```
 
-   (`serviceaccounts-rbac.yaml`의 `kms-cb-demo-…` ClusterRole은 3단계와 같은 이름이면 그대로 갱신된다. 기존 Role은 apply가 지우지 않는다.)
+   (`serviceaccounts-rbac.yaml`의 `kms-cb-demo-…` ClusterRole은 이미 적용된 것과 같은 이름이면 그대로 갱신된다. 기존 Role은 apply가 지우지 않는다.)
 
-2. KMS static pod 교체 — kubelet은 `.`으로 시작하는 파일을 무시하므로 임시 파일 → `mv`(원자적):
+2. KMS static pod **부분 수정** — 원본은 건드리지 않고 새 파일을 만든 뒤 diff를 사람이 검토한다:
 
 ```bash
-sudo install -m 0600 $OUT/kms-static-pod.yaml /etc/kubernetes/manifests/.kms-static-pod.yaml.new
+python3 scripts/patch-kms-manifest.py --input /etc/kubernetes/manifests/kms-static-pod.yaml \
+  --output /root/kms-static-pod.new.yaml --image <SERVER_IMAGE digest>
+# 확인: diff에 나온 변경은 이것뿐이어야 한다
+#   - 이미지 줄
+#   - KMS_SEAL_TYPE → KMS_SEAL_ALLOWED=shamir
+#   - 추가: KMS_TRANSIT_AUDIT_DIR, KMS_EXTERNAL_* 6개(ADDR 0.0.0.0:9443, 네임스페이스 2개, RPS 20, BURST 40, AUTHFAIL_MAX 10)
+#   - 추가: transit-audit 볼륨 마운트·볼륨
+# 이미 적용된 항목은 건너뛴다. 두 번 실행해도 같은 결과. 외부 리스너를 아직 켜지 않으려면 --no-external.
+```
+
+3. 교체 — kubelet은 `.`으로 시작하는 파일을 무시하므로 임시 파일 → `mv`(원자적):
+
+```bash
+sudo install -m 0600 /root/kms-static-pod.new.yaml /etc/kubernetes/manifests/.kms-static-pod.yaml.new
 sudo mv /etc/kubernetes/manifests/.kms-static-pod.yaml.new /etc/kubernetes/manifests/kms-static-pod.yaml
 # kubelet이 Pod를 다시 만든다. 이 순간부터 봉인 상태 → 바로 조각 3개
 until sudo test -S /run/custom-kms/admin/admin.sock; do sleep 2; done
@@ -169,6 +220,20 @@ $K -n default delete secret kms-apply-check
 - 실패(403)하면: `sudo journalctl`이 아니라 KMS 컨테이너 로그에서 `authz: denied ... namespace="" key=...`를 찾는다. `namespace=""`는 전역 키 판단이다.
   해당 주체의 ClusterRoleBinding이 빠진 것이므로 2~3단계 표를 다시 확인한다.
 
+**5-2b. data key 왕복**
+
+data key 왕복은 6단계에서 외부 사용자 토큰으로 함께 확인한다(내부 SA에 `datakey` verb를 따로 주지 않았기 때문). 확인할 것:
+`POST /v1/datakey/<키>` → `{"ciphertext":"kms:v1:...","plaintext":"<base64>","key_version":1}`, 그 `ciphertext`를 `POST /v1/decrypt/<키>`에 보내면 같은 `plaintext`.
+
+**5-2c. 인증서 무중단 교체 확인** (3단계의 재발급을 재시작 *후*에 했다면 반드시, 아니면 선택)
+
+```bash
+# 인증서 교체 후 최대 30초 뒤, 접속에 실제로 쓰이는 인증서의 SAN과 만료일 (<Transit 주소>는 배포 값)
+echo | openssl s_client -connect <Transit 주소> -servername kms-transit 2>/dev/null | openssl x509 -noout -enddate -ext subjectAltName
+# 확인: 새 SAN이 보인다. KMS를 재시작하지 않았다.
+# KMS 로그에 "tlsreload: certificate reloaded" 한 줄 (깨진 파일이면 "keeping the previous one" 경고 — 이전 인증서는 계속 사용 중)
+```
+
 **5-3. Transit 감사 파일 생성**
 
 ```bash
@@ -206,10 +271,89 @@ sudo curl -sS --unix-socket $SOCK -XPOST http://localhost/v1/keys/apply-check/ca
 
 되돌리기: 5단계 중 실패가 있으면 4단계의 되돌리기를 따른다.
 
-## 6. 정리 확인 (선택, 하루 정도 지켜본 뒤)
+## 6. 외부 사용자 경로 ③ 열기 — **5단계 점검을 모두 통과한 뒤에만**
+
+재시작만으로는 인터넷에 열리지 않는다. 리스너(`0.0.0.0:9443`)는 떠 있지만 OCI 방화벽이 닫혀 있기 때문이다. 아래 순서로 **사람이** 연다.
+
+1. 외부 사용자 1명과 키 만들기 (서버에서):
+
+```bash
+sudo scripts/kms-external-user.sh add alice orders --plan     # 먼저 계획 확인
+sudo scripts/kms-external-user.sh add alice orders            # 키 kms-external.orders 가 없으면 만들지 [y/N] → y
+# 확인: SA kms-external/alice, Role/RoleBinding kms-ext-alice-orders (verbs encrypt, decrypt, rewrap, datakey)
+```
+
+2. **OCI 방화벽에서 TCP 9443 인그레스 열기** (OCI 콘솔: 서브넷 보안 목록 또는 NSG). 가능하면 허용 출처를 특정 CIDR로 좁힌다.
+   호스트 자체 방화벽(iptables)도 확인한다 (OCI Ubuntu 이미지는 INPUT 규칙이 닫혀 있을 수 있다):
+
+```bash
+sudo iptables -L INPUT -n --line-numbers | head -20          # 9443 허용 규칙이 있는지
+# 없으면(영구 저장 방식은 환경에 맞게): sudo iptables -I INPUT -p tcp --dport 9443 -j ACCEPT
+```
+
+3. **CA 인증서(공개값) 배포.** 외부 사용자는 내부 CA 인증서로 서버를 검증한다. 인증서는 공개 정보라 안전한 채널(메신저, 이메일 등)로 보내도 된다.
+   **CA 키는 절대 보내지 않는다.** 사용자는 받은 파일을 `ca.crt`로 두고 `curl --cacert ca.crt`처럼 쓴다.
+
+```bash
+sudo cat <내부 CA 인증서 경로>        # 사용자에게 전달 (PEM 텍스트, 공개값)
+```
+
+4. 토큰 발급 (표준 출력으로만 나온다. 파일로 저장하지 말고 변수에 담아 쓴다. 기본 1시간, 최대 24시간):
+
+```bash
+TOKEN=$(sudo scripts/kms-external-user.sh token alice 1)      # audience는 운영 매니페스트의 KMS_SA_AUDIENCE에서 읽음
+```
+
+5. 외부(운영자 PC 등 서버 밖)에서 확인 — `<공인 주소>`는 실제 값으로:
+
+```bash
+B=https://<공인 주소>:9443
+curl --cacert ca.crt $B/healthz                                                          # 확인: {"status":"ok"}
+PT=$(printf 'hello' | base64)
+CT=$(curl -s --cacert ca.crt -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+      -d "{\"plaintext\":\"$PT\"}" $B/v1/encrypt/kms-external.orders | python3 -c 'import sys,json;print(json.load(sys.stdin)["ciphertext"])')
+curl -s --cacert ca.crt -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d "{\"ciphertext\":\"$CT\"}" $B/v1/decrypt/kms-external.orders                      # 확인: {"plaintext":"aGVsbG8="}
+# data key 왕복
+DK=$(curl -s --cacert ca.crt -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' -d '{}' $B/v1/datakey/kms-external.orders)
+echo "$DK" | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d["ciphertext"][:12], d["key_version"], len(d["plaintext"]))'   # kms:v1:... 1 44
+# 위 ciphertext를 /v1/decrypt 에 보내면 같은 plaintext(base64)가 돌아온다
+```
+
+6. **방어선 확인** (같은 외부 주소에서):
+
+```bash
+# (a) 내부 SA 토큰은 외부에서 403 — 서버에서 내부 SA 토큰을 받아 외부 주소로 보낸다
+INT=$(sudo kubectl --kubeconfig=/etc/kubernetes/admin.conf -n kms-demo create token app-a --audience <KMS_SA_AUDIENCE> --duration=10m)
+curl -s -o /dev/null -w '%{http_code}\n' --cacert ca.crt -H "Authorization: Bearer $INT" -H 'content-type: application/json' \
+  -d "{\"plaintext\":\"$PT\"}" $B/v1/encrypt/kms-external.orders                        # 확인: 403
+# (b) 외부 토큰으로 내부(전역) 키 접근은 403 — 키가 존재하든 말든 같은 응답
+curl -s -w ' %{http_code}\n' --cacert ca.crt -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d "{\"plaintext\":\"$PT\"}" $B/v1/encrypt/demo                                        # 확인: forbidden 403
+# (c) 관리·진단 경로는 없다
+curl -s -o /dev/null -w '%{http_code}\n' --cacert ca.crt -H "Authorization: Bearer $TOKEN" $B/v1/sys/seal-profile   # 확인: 404
+# (d) 요청 폭주 → 429 rate_limited (기본 초당 20, burst 40). 이 PC의 IP가 잠깐 제한되는 것은 정상이다
+for i in $(seq 1 120); do curl -s -o /dev/null -w '%{http_code}\n' --cacert ca.crt $B/healthz; done | sort | uniq -c   # 확인: 200 ~40+, 429 다수
+```
+
+   **주의(인증 실패 차단 시험)**: 잘못된 토큰으로 1분에 10회를 넘게 보내면 **그 PC의 IP가 5분간 429로 막힌다**(정상 동작). 시험하면 5분 기다리거나 다른 PC에서 확인한다.
+   서버에서 지표와 감사 확인:
+
+```bash
+curl -sS http://127.0.0.1:9100/metrics | grep -E 'kms_external_(requests|rejected)_total|kms_external_blocked_ips'
+# 확인: kms_external_rejected_total{reason="rate"} 가 (d) 이후 0보다 큼. IP 값은 지표에 없다
+sudo grep '"listener":"external"' /var/lib/custom-kms/transit-audit/$(date -u +%F).jsonl | tail -n 5
+# 확인: client_ip, sar_namespace "kms-external", status 200/403 …  본문·토큰·평문 없음
+```
+
+   되돌리기: **OCI 방화벽의 9443 규칙을 닫는다**(이것이 가장 빠른 차단). 사용자 제거: `sudo scripts/kms-external-user.sh remove alice`(키는 남는다).
+   리스너 자체를 끄려면 static pod에서 `KMS_EXTERNAL_ADDR`를 비운다(백업 매니페스트 복원이면 재시작 필요).
+
+## 7. 정리 확인 (선택, 하루 정도 지켜본 뒤)
 
 - 기존 네임스페이스 Role/RoleBinding(전역 키용)은 새 규칙에서 효력이 없다. **지우지 않고 둔다**(되돌리기 대비). 정리는 별도 판단.
 - 2단계 표를 다시 뽑아 "사라짐"이 모두 "이전됨"으로 바뀌었는지 확인: `kubectl get ... -o json > /root/rbac-after.json && python3 scripts/migrate-rbac-cb.py check --input /root/rbac-after.json`.
+- 외부 토큰은 수명이 짧을수록 좋다(유출 시 개별 회수 불가). 필요한 때만 발급한다.
 
 ## 되돌리기 (이전 서버 이미지로)
 
@@ -218,7 +362,9 @@ sudo curl -sS --unix-socket $SOCK -XPOST http://localhost/v1/keys/apply-check/ca
 | 시점 | 방법 |
 |---|---|
 | 0~3단계 | 각 단계의 되돌리기 (서비스 영향 없음) |
-| 4~6단계 | 백업 `<ID>/manifests/kms-static-pod.yaml`로 static pod 복원 + 조각 3개 해제. 새 ClusterRole은 남겨도 무해 |
+| 4~5단계 | 백업 `<ID>/manifests/kms-static-pod.yaml`로 static pod 복원 + 조각 3개 해제. 새 ClusterRole은 남겨도 무해 |
+| 6단계 (외부 경로) | OCI 방화벽 9443 닫기 → `kms-external-user.sh remove` → (필요 시) 매니페스트 복원 |
+| 3단계 인증서 재발급 | `backup-<시각>/`의 인증서·키를 임시 이름 → `mv`로 복원(30초 내 반영) |
 | 이전 이미지가 읽는 데이터 | 키 저장소·init 기록(v1) 모두 읽힌다 |
 | 키 삭제 기능으로 상태를 바꾼 뒤 이전 이미지로 복귀 | 이전 이미지는 `State`를 모르므로 disabled/pending 키를 active로 취급하고 자동 삭제도 하지 않는다. 복귀 전에 모든 키를 `enable` 해 두는 것이 안전하다 |
 | Transit 감사 | 이전 이미지는 `KMS_TRANSIT_AUDIT_DIR`을 모르므로 무시한다(파일은 남는다) |

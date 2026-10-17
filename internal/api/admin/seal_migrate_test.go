@@ -585,3 +585,26 @@ func (p *proc) unsealWithSharesAgain(t *testing.T) {
 	p.sw.Shamir().Reset()
 	p.unsealWith(p.shares)
 }
+
+// seal-profile은 관리 소켓에서도 응답하고, 현재 봉인 방식(shamir/tpm)을 따라간다.
+func TestSealProfileOnAdminFollowsMode(t *testing.T) {
+	store, dev := storage.NewMemoryStorage(), sealtest.NewDevice()
+	p := startProc(t, store, dev)
+	p.initAndUnseal()
+	get := func() map[string]any {
+		resp, err := http.Get(p.srv.URL + "/v1/sys/seal-profile")
+		if err != nil || resp.StatusCode != 200 {
+			t.Fatalf("seal-profile: %v %v", resp, err)
+		}
+		var out map[string]any
+		decodeJSON(t, resp, &out)
+		return out
+	}
+	if pr := get(); pr["Type"] != "shamir" || pr["RequiresHumans"] != true || pr["AutoUnsealCapable"] != false {
+		t.Fatalf("shamir profile = %v", pr)
+	}
+	p.post("/v1/sys/seal-migrate", map[string]string{"target": "tpm"})
+	if pr := get(); pr["Type"] != "tpm" || pr["RequiresHumans"] != false || pr["AutoUnsealCapable"] != true {
+		t.Fatalf("tpm profile = %v", pr)
+	}
+}

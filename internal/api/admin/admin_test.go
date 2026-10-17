@@ -71,7 +71,7 @@ func decodeJSON(t *testing.T, resp *http.Response, dest any) {
 }
 
 // TestRouter_TransitRoutesNotRegistered는 암복호화/rewrap과
-// seal-profile/seal-benchmark이 Admin 라우터에는 전혀 등록되지 않았음을
+// seal-benchmark이 Admin 라우터에는 전혀 등록되지 않았음을
 // 확인한다 — 이 라우터는 유닉스 소켓 전용이라 여기 데이터 평면 라우트가
 // 남아있으면 안 된다(설계상 큰 문제는 아니지만, 두 평면의 경계가 코드
 // 상에서도 명확해야 한다).
@@ -85,7 +85,6 @@ func TestRouter_TransitRoutesNotRegistered(t *testing.T) {
 		{http.MethodPost, "/v1/encrypt/app"},
 		{http.MethodPost, "/v1/decrypt/app"},
 		{http.MethodPost, "/v1/rewrap/app"},
-		{http.MethodGet, "/v1/sys/seal-profile"},
 		{http.MethodGet, "/v1/sys/seal-benchmark"},
 	}
 

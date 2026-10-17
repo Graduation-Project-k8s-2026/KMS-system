@@ -201,3 +201,22 @@ func TestRouter_KeyLifecycleRoutesAllowlistedPOSTOnly(t *testing.T) {
 		}
 	}
 }
+
+func TestRouter_SealProfileIsAllowlistedGETOnly(t *testing.T) {
+	router := adminapi.NewRouter(adminapi.Deps{SocketPath: filepath.Join(t.TempDir(), "unused.sock")})
+	srv := httptest.NewServer(router)
+	t.Cleanup(srv.Close)
+	resp, err := http.Get(srv.URL + "/v1/sys/seal-profile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed {
+		t.Fatalf("GET seal-profile = %d; not allowlisted", resp.StatusCode)
+	}
+	resp, _ = http.Post(srv.URL+"/v1/sys/seal-profile", "application/json", strings.NewReader("{}"))
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusMethodNotAllowed && resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("POST seal-profile = %d", resp.StatusCode)
+	}
+}

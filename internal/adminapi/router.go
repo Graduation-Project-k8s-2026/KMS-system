@@ -42,7 +42,7 @@ func NewRouter(deps Deps) http.Handler {
 	r.Get("/readyz", handleReadyz(deps.SocketPath))
 
 	proxy := NewSocketProxy(deps.SocketPath)
-	for _, path := range []string{"/v1/sys/seal-status", "/v1/keys", "/v1/keys/", "/v1/keys/{name}"} {
+	for _, path := range []string{"/v1/sys/seal-status", "/v1/sys/seal-profile", "/v1/keys", "/v1/keys/", "/v1/keys/{name}"} {
 		r.Method("GET", path, proxy)
 	}
 	for _, path := range []string{"/v1/sys/init", "/v1/sys/unseal", "/v1/sys/seal", "/v1/sys/seal-migrate", "/v1/keys", "/v1/keys/", "/v1/keys/{name}/rotate", "/v1/keys/{name}/config", "/v1/keys/{name}/disable", "/v1/keys/{name}/enable", "/v1/keys/{name}/schedule-deletion", "/v1/keys/{name}/cancel-deletion"} {

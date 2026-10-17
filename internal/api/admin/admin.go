@@ -75,6 +75,9 @@ func NewRouter(deps Deps) http.Handler {
 	// 상태에서 호출해야 하므로, 여길 막으면 봉인을 영영 풀 수 없게 된다.
 	r.Route("/v1/sys", func(r chi.Router) {
 		r.Get("/seal-status", handleSealStatus(deps, progress))
+		// 현재 봉인 방식의 특성(shamir/tpm). Transit에도 같은 경로가 있다 — 관리 화면은 유닉스 소켓
+		// 중계(admin-api)로만 서버와 통신하므로 이쪽에도 필요하다. 키 자료가 아닌 고정된 설명 값이다.
+		r.Get("/seal-profile", handleSealProfile(deps))
 		r.Post("/init", handleInit(deps))
 		r.Post("/seal", func(w http.ResponseWriter, r *http.Request) {
 			if deps.OnSeal != nil {
@@ -648,5 +651,16 @@ func handleScheduleDeletion(deps Deps) http.HandlerFunc {
 			return
 		}
 		httputil.WriteJSON(w, http.StatusOK, meta)
+	}
+}
+
+func handleSealProfile(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		profiler, ok := deps.Seal.(seal.Profiler)
+		if !ok {
+			httputil.WriteJSONError(w, http.StatusInternalServerError, "seal profile unavailable")
+			return
+		}
+		httputil.WriteJSON(w, http.StatusOK, profiler.Profile())
 	}
 }

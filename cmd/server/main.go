@@ -29,6 +29,7 @@ import (
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/audit"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/kmsv2"
 	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/security"
+	"github.com/Graduation-Project-k8s-2026/KMS-system/internal/tlsreload"
 	"google.golang.org/grpc"
 	pb "k8s.io/kms/apis/v2"
 	"log"
@@ -69,7 +70,8 @@ const adminSocketPerm = 0o600
 
 func main() {
 	cert, key := os.Getenv("KMS_TRANSIT_TLS_CERT"), os.Getenv("KMS_TRANSIT_TLS_KEY")
-	pair, err := tls.LoadX509KeyPair(cert, key)
+	// 인증서 파일이 바뀌면(30초 이내 확인) 재시작 없이 새 인증서를 쓴다. 처음 읽기에 실패하면 기동 실패.
+	tlsReload, err := tlsreload.New(cert, key)
 	if err != nil {
 		log.Fatal("Transit TLS certificate/key required")
 	}
@@ -341,7 +343,7 @@ func main() {
 			v2Errs <- err
 		}
 	}()
-	transitListener = tls.NewListener(transitListener, &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{pair}})
+	transitListener = tls.NewListener(transitListener, tlsReload.Config())
 	adminRouter = auditLog.Middleware(audit.PeerSubject, adminRouter)
 
 	adminHTTP := security.Server("", adminRouter)

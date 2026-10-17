@@ -16,6 +16,14 @@ type Spec struct {
 	Duration    int    `json:"duration_seconds"`
 }
 
+// Normalize는 "시간 기준 시험은 count를 요구하지 않는다"를 구현한다: duration_seconds > 0이고 count가 0(생략)이면 count를 상한
+// 100000으로 채운다 (벤치 러너는 count를 최대 왕복 수로 쓰고 시간이 먼저 끝나면 멈춘다). 이미 값이 있으면 그대로 둔다.
+func (s *Spec) Normalize() {
+	if s.Duration > 0 && s.Count == 0 {
+		s.Count = 100000
+	}
+}
+
 func (s Spec) Validate() error {
 	if (s.Mode != "transit" && s.Mode != "plugin" && s.Mode != "e2e") || s.Scenario != "basic" || (s.Operation != "roundtrip") || s.Count < 1 || s.Count > 100000 || s.Concurrency < 1 || s.Concurrency > 32 || s.Payload < 1 || s.Payload > 1<<20 || s.Duration < 0 || s.Duration > 300 {
 		return errors.New("invalid fixed benchmark parameters")

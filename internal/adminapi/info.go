@@ -16,6 +16,9 @@ type Info struct {
 	SourceSHA     string
 	BenchImage    string
 	AdminImage    string
+	// ProtectedKeys: 비활성화·삭제 예약이 거부되는 키(KMS v2 키와 KMS_PROTECTED_KEYS). 화면이 해당 버튼을 미리 막고 이유를 보여 주는 데 쓴다.
+	// 서버(KMS)가 최종 판단하므로 이 목록이 틀려도 409 key_protected로 거부된다.
+	ProtectedKeys []string
 }
 
 func handleInfo(info Info, auditEnabled bool) http.HandlerFunc {
@@ -27,6 +30,7 @@ func handleInfo(info Info, auditEnabled bool) http.HandlerFunc {
 			"bench_image":    info.BenchImage,
 			"admin_image":    info.AdminImage,
 			"audit_enabled":  auditEnabled,
+			"protected_keys": info.ProtectedKeys,
 		})
 	}
 }

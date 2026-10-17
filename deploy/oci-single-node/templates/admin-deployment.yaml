@@ -78,6 +78,9 @@ spec:
           value: https://kms-ingest.kms-system.svc.cluster.local:8202
         - name: ADMIN_API_CORE_AUDIT_DIR
           value: /core-audit
+        # Transit(암복호화) 감사 파일(읽기 전용). 감사 화면이 관리 감사와 합쳐 보여 준다. 호스트 디렉터리는 KMS 쪽 준비 단계에서 만든다.
+        - name: ADMIN_API_TRANSIT_AUDIT_DIR
+          value: /transit-audit
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true
@@ -124,6 +127,9 @@ spec:
         - name: core-audit
           mountPath: /core-audit
           readOnly: true
+        - name: transit-audit
+          mountPath: /transit-audit
+          readOnly: true
         - name: tmp
           mountPath: /tmp
       volumes:
@@ -145,6 +151,10 @@ spec:
       - name: core-audit
         hostPath:
           path: /var/lib/custom-kms/core-audit
+          type: Directory
+      - name: transit-audit
+        hostPath:
+          path: /var/lib/custom-kms/transit-audit
           type: Directory
       - name: tmp
         emptyDir:

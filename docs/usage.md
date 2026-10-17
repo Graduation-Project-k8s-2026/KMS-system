@@ -48,6 +48,11 @@ go run ./cmd/admin-api
 | `KMS_TRANSIT_AUDIT_DIR` | (비움=끔) | Transit 요청 비동기 감사 파일 디렉터리 (키 이름·주체·결과·지연; 본문 미기록) |
 | `KMS_TRANSIT_AUDIT_BUFFER` | 8192 | 감사 버퍼 크기. 가득 차면 요청을 막지 않고 버리며 `kms_audit_dropped_total`이 오른다 |
 | `KMS_TRANSIT_AUDIT_FSYNC_MS` | 1000 | 감사 fsync 주기(ms) |
+| `KMS_EXTERNAL_ADDR` | (비움=끔) | 외부(인터넷 공개) 리스너 주소. 템플릿 기본 `0.0.0.0:9443` |
+| `KMS_EXTERNAL_SUBJECT_NAMESPACES` | `kms-external` | 외부 리스너가 받는 요청자 SA의 네임스페이스(쉼표 목록) |
+| `KMS_EXTERNAL_KEY_NAMESPACES` | `kms-external` | 외부 리스너가 받는 키 `<ns>.<name>`의 ns(쉼표 목록) |
+| `KMS_EXTERNAL_RPS` / `KMS_EXTERNAL_BURST` | 20 / 40 | 클라이언트 IP별 초당 요청 수 / 버스트. 넘으면 429 `rate_limited` |
+| `KMS_EXTERNAL_AUTHFAIL_MAX` | 10 | IP당 1분 내 인증 실패(401) 허용 횟수. 넘으면 5분 차단(429) |
 | `KMS_PROTECTED_KEYS` | (비움) | 비활성화·삭제 예약을 거부할 키 목록(쉼표). KMS v2 키(`KMS_V2_KEY_NAME`)는 자동 보호 |
 | `KMS_KEY_REAPER_INTERVAL_SEC` | 600 | 삭제 유예가 끝난 키를 점검하는 주기(초) |
 | `KMS_STORAGE` | `file` | 저장 백엔드: `memory`\|`file` |
@@ -180,6 +185,44 @@ curl --unix-socket $SOCK -XPOST http://localhost/v1/keys/demo/cancel-deletion  #
 `disabled`/`pending_deletion` 키의 encrypt/decrypt/rewrap은 `409 key_not_active`이고 자동 회전도 건너뛴다.
 유예가 지나면 백그라운드 작업이 키 자료를 삭제한다(되돌릴 수 없음, 관리 감사에 기록, 봉인 해제 상태에서만).
 KMS v2 키와 `KMS_PROTECTED_KEYS`의 키는 `409 key_protected`로 거부된다.
+
+### data key — 봉투 암호화를 클라이언트에서
+
+큰 데이터는 KMS로 보내지 않고, KMS에서 1회용 데이터 키를 받아 로컬에서 암호화한다(권한: verb `datakey`).
+
+```bash
+# 키 받기 (기본 256비트, 평문 키 포함)
+curl -s -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' -d '{}' https://<주소>/v1/datakey/<키>
+# → {"ciphertext":"kms:v1:...","plaintext":"<base64 키>","key_version":1}
+#   {"bits":128} 로 128비트, {"plaintext":false} 로 암호문만 받을 수도 있다
+```
+
+클라이언트는 `plaintext` 키로 데이터를 AES-GCM 등으로 암호화하고 키를 버린 뒤 `ciphertext`(키의 암호문)를 데이터와 함께 저장한다.
+복호화할 때는 저장해 둔 `ciphertext`를 `POST /v1/decrypt/<키>`에 보내 평문 키를 되찾는다. 키를 회전해도 이전 data key 암호문은
+`min_decryption_version`이 허용하는 동안 복호화된다.
+
+### 외부에서 사용하기 (인터넷 공개 경로)
+
+운영자가 외부 사용자 한 명을 만든다 (서버에서):
+
+```bash
+scripts/kms-external-user.sh add alice orders      # SA kms-external/alice, 키 kms-external.orders (권한: encrypt/decrypt/rewrap/datakey)
+scripts/kms-external-user.sh token alice 1         # 1시간(최대 24시간)짜리 토큰이 표준 출력으로 나온다
+```
+
+**내부 CA 인증서(공개값)를 사용자에게 전달**한다(`sudo cat <내부 CA 인증서 경로>`, PEM 텍스트). CA *키*는 절대 보내지 않는다.
+사용자는 이를 `ca.crt`로 저장한다.
+
+```bash
+B=https://<공인 주소>:9443
+curl --cacert ca.crt $B/healthz
+curl --cacert ca.crt -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+     -d '{"plaintext":"aGVsbG8="}' $B/v1/encrypt/kms-external.orders
+curl --cacert ca.crt -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' -d '{}' $B/v1/datakey/kms-external.orders
+```
+
+외부에서는 `encrypt|decrypt|rewrap|datakey`만 되고 키 이름은 `kms-external.<이름>`이어야 한다(그 외는 모두 같은 403). 요청이 너무 많으면
+`429 rate_limited`(`Retry-After` 헤더), 잘못된 토큰을 반복하면 5분간 차단된다. 내부 ServiceAccount 토큰은 외부에서 403이다.
 
 ### 오류 응답 형식
 

@@ -188,7 +188,7 @@ func ReadToday(dir string) ([]Event, error) {
 
 func action(r *http.Request) string {
 	path := r.URL.Path
-	for _, p := range []string{"/v1/sys/init", "/v1/sys/unseal", "/v1/sys/seal", "/api/jobs", "/api/bench/results", "/v1/keys", "/api/session", "/api/audit"} {
+	for _, p := range []string{"/v1/sys/init", "/v1/sys/unseal", "/v1/sys/seal-migrate", "/v1/sys/seal", "/api/jobs", "/api/bench/results", "/v1/keys", "/api/session", "/api/audit"} {
 		if path == p || strings.HasPrefix(path, p+"/") {
 			return r.Method + " " + p
 		}

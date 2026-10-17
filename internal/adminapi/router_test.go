@@ -155,3 +155,27 @@ func TestRouter_Dashboard_MountedOnlyWhenConfigured(t *testing.T) {
 		}
 	}
 }
+
+// seal-migrate는 관리 API 허용 목록에 있어야 한다(POST만; 없는 소켓이면 프록시가 502/503).
+func TestRouter_SealMigrateIsAllowlistedPOSTOnly(t *testing.T) {
+	router := adminapi.NewRouter(adminapi.Deps{SocketPath: filepath.Join(t.TempDir(), "unused.sock")})
+	srv := httptest.NewServer(router)
+	t.Cleanup(srv.Close)
+
+	resp, err := http.Post(srv.URL+"/v1/sys/seal-migrate", "application/json", strings.NewReader(`{"target":"tpm"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed {
+		t.Fatalf("POST status = %d; route not registered", resp.StatusCode)
+	}
+	resp, err = http.Get(srv.URL + "/v1/sys/seal-migrate")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusMethodNotAllowed && resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("GET status = %d, want 404/405", resp.StatusCode)
+	}
+}

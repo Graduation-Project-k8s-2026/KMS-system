@@ -53,7 +53,7 @@ func NewRouter(deps Deps) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Cache-Control", "no-store")
 			r.Body = http.MaxBytesReader(w, r.Body, 2<<20)
-			if r.URL.Path == "/v1/sys/init" || r.URL.Path == "/v1/sys/unseal" || r.URL.Path == "/v1/sys/seal" {
+			if r.URL.Path == "/v1/sys/init" || r.URL.Path == "/v1/sys/unseal" || r.URL.Path == "/v1/sys/seal" || r.URL.Path == "/v1/sys/seal-migrate" {
 				lifecycle.Lock()
 				defer lifecycle.Unlock()
 			}
@@ -79,13 +79,16 @@ func NewRouter(deps Deps) http.Handler {
 				deps.OnSeal()
 			}
 			deps.Barrier.Seal()
-			if s, ok := deps.Seal.(*seal.ShamirSeal); ok {
+			if s, ok := shamirOf(deps.Seal); ok {
 				s.Reset()
 			}
 			progress.set(0)
 			httputil.WriteJSON(w, 200, map[string]bool{"sealed": true})
 		})
 		r.Post("/unseal", handleUnseal(deps, progress))
+		// 봉인 방식 이전(Shamir <-> TPM) 및 조각 재발급. 관리 소켓 전용이며 Transit
+		// 라우터에는 등록하지 않는다. 봉인 해제 상태에서만 동작한다(핸들러가 확인).
+		r.Post("/seal-migrate", handleSealMigrate(deps))
 	})
 
 	// 키 관리는 Root Key가 메모리에 있어야만 의미가 있으므로 sealed 가드를
@@ -112,9 +115,12 @@ type sealStatusResponse struct {
 	MigrationRequired bool   `json:"migration_required"`
 	Sealed            bool   `json:"sealed"`
 	SealType          string `json:"seal_type"`
-	// Progress: sealed=true이고 seal_type이 "shamir"일 때만 채워진다.
-	// "1/3" 형태로 지금까지 제출된 조각 수/threshold를 보여준다.
+	// Progress: sealed=true이고 조각으로 해제할 수 있는 상태(shamir, 또는 tpm 모드의
+	// 복구 조각)일 때만 채워진다. "1/3" 형태로 지금까지 제출된 조각 수/threshold.
 	Progress string `json:"progress,omitempty"`
+	// RecoveryAvailable: 이 서버가 TPM 모드이고, TPM 해제가 실패해도 같은 루트 키의
+	// Shamir 복구 조각으로 해제할 수 있는지. tpm 모드에서만 true.
+	RecoveryAvailable bool `json:"recovery_available"`
 }
 
 type initResponse struct {
@@ -188,8 +194,11 @@ func handleSealStatus(deps Deps, progress *shamirProgress) http.HandlerFunc {
 			Sealed:   deps.Barrier.IsSealed(),
 			SealType: deps.Barrier.SealType(),
 		}
-		if resp.Sealed && resp.SealType == "shamir" {
+		if _, ok := shamirOf(deps.Seal); ok && resp.Sealed {
 			resp.Progress = fmt.Sprintf("%d/%d", progress.get(), deps.ShamirThreshold)
+		}
+		if _, ok := deps.Seal.(*seal.Switch); ok && resp.SealType == barrier.SealTPM {
+			resp.RecoveryAvailable = true
 		}
 		httputil.WriteJSON(w, http.StatusOK, resp)
 	}
@@ -232,7 +241,9 @@ func handleInit(deps Deps) http.HandlerFunc {
 				Sealed:  false,
 			})
 
-		case *seal.ShamirSeal:
+		case *seal.ShamirSeal, *seal.Switch:
+			// Switch는 init 기록이 없는 저장소에서만 여기에 도달한다(기록이 있으면
+			// Initialize가 ErrInitialized → 409). 새 저장소는 항상 shamir로 시작한다.
 			shares, err := deps.Barrier.Initialize(deps.ShamirParts, deps.ShamirThreshold)
 			if err != nil {
 				if errors.Is(err, barrier.ErrInitialized) {
@@ -316,9 +327,7 @@ func handleUnseal(deps Deps, progress *shamirProgress) http.HandlerFunc {
 			return
 		}
 
-		sealer, isShamir := deps.Seal.(*seal.ShamirSeal)
-		if !isShamir {
-			// dev/tpm/k8s: 한 번의 Unseal 호출로 끝난다. body는 아예 안 쓴다.
+		finish := func() {
 			if err := deps.Barrier.Unseal(); err != nil {
 				if errors.Is(err, barrier.ErrInitialized) {
 					httputil.WriteJSONError(w, 409, "already initialized")
@@ -335,6 +344,12 @@ func handleUnseal(deps Deps, progress *shamirProgress) http.HandlerFunc {
 				}
 			}
 			httputil.WriteJSON(w, http.StatusOK, unsealResponse{Sealed: false})
+		}
+
+		sealer, isShamir := shamirOf(deps.Seal)
+		if !isShamir {
+			// dev/tpm/k8s: 한 번의 Unseal 호출로 끝난다. body는 아예 안 쓴다.
+			finish()
 			return
 		}
 
@@ -342,6 +357,12 @@ func handleUnseal(deps Deps, progress *shamirProgress) http.HandlerFunc {
 		_ = json.NewDecoder(r.Body).Decode(&req) // body가 없어도(EOF) 조용히 무시
 
 		if req.Share == "" {
+			// TPM 모드에서는 조각 없이 호출하면 TPM 해제를 (다시) 시도한다 — 장치를
+			// 나중에 붙인 경우 등. 실패하면 봉인을 유지하고 이유를 알려 준다.
+			if sw, ok := deps.Seal.(*seal.Switch); ok && sw.Mode() == barrier.SealTPM {
+				finish()
+				return
+			}
 			httputil.WriteJSONError(w, http.StatusBadRequest, "share is required for shamir seal")
 			return
 		}
@@ -369,8 +390,10 @@ func handleUnseal(deps Deps, progress *shamirProgress) http.HandlerFunc {
 
 		// threshold에 막 도달한 순간 — barrier.Unseal()이 내부적으로
 		// sealer.Unseal()(shamir.Combine)을 호출해 Root Key를 복원한다.
+		// 실패하면 조각 진행 상태를 지워 처음부터 다시 받을 수 있게 한다.
 		if err := deps.Barrier.Unseal(); err != nil {
 			progress.set(0)
+			sealer.Reset()
 			if errors.Is(err, barrier.ErrInitialized) {
 				httputil.WriteJSONError(w, 409, "already initialized")
 			} else {
@@ -378,6 +401,7 @@ func handleUnseal(deps Deps, progress *shamirProgress) http.HandlerFunc {
 			}
 			return
 		}
+		progress.set(0)
 		if deps.OnUnseal != nil {
 			if err := deps.OnUnseal(); err != nil {
 				deps.Barrier.Seal()
@@ -386,6 +410,99 @@ func handleUnseal(deps Deps, progress *shamirProgress) http.HandlerFunc {
 			}
 		}
 		httputil.WriteJSON(w, http.StatusOK, unsealResponse{Sealed: false})
+	}
+}
+
+// shamirOf: Shamir 조각을 받을 수 있는 seal(순수 Shamir 또는 Switch 안의 Shamir)을 꺼낸다.
+func shamirOf(s seal.Seal) (*seal.ShamirSeal, bool) {
+	switch x := s.(type) {
+	case *seal.ShamirSeal:
+		return x, true
+	case *seal.Switch:
+		return x.Shamir(), true
+	}
+	return nil, false
+}
+
+// ---- POST /v1/sys/seal-migrate ----
+
+type sealMigrateRequest struct {
+	Target string `json:"target"` // "tpm" | "shamir"
+}
+
+type sealMigrateResponse struct {
+	Previous string `json:"previous"`
+	SealType string `json:"seal_type"`
+	Parts    int    `json:"parts"`
+	// Threshold: 해제에 필요한 조각 수.
+	Threshold int `json:"threshold"`
+	// Shares: 새로 발급한 Shamir 조각(base64). 이 응답이 조각을 보여주는 유일한 순간이며
+	// 서버는 저장하지 않는다. seal_type이 tpm이면 TPM 해제가 실패할 때 쓰는 복구 조각이다.
+	Shares  []string `json:"shares"`
+	Message string   `json:"message"`
+	Warning string   `json:"warning,omitempty"`
+}
+
+const sameRootWarning = "같은 루트 키를 다시 나눈 것이라 이전 조각도 계속 유효하다. " +
+	"조각 유출 대응은 루트 키 교체(rekey)가 필요하며 미구현"
+
+// handleSealMigrate는 봉인 해제 상태의 같은 루트 키를 다른 방식으로 다시 봉인한다.
+// 루트 키를 새로 만들지 않는다 — 실제 작업은 barrier.MigrateSeal. 조각/루트 키는
+// 응답 본문 외 어디에도(로그, 감사) 남기지 않는다: 감사 미들웨어는 메서드와 경로만
+// 기록하고, 이 핸들러는 조각을 로그로 내보내지 않는다.
+func handleSealMigrate(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req sealMigrateRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			httputil.WriteJSONError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		sw, ok := deps.Seal.(*seal.Switch)
+		if !ok {
+			httputil.WriteJSONError(w, http.StatusNotImplemented, "seal migration is not supported by this server's seal")
+			return
+		}
+		if deps.Barrier.IsSealed() {
+			httputil.WriteJSONError(w, http.StatusConflict, "kms is sealed; unseal first (seal migration re-seals the in-memory root key)")
+			return
+		}
+		previous := sw.Mode()
+		shares, err := deps.Barrier.MigrateSeal(sw, req.Target, deps.ShamirParts, deps.ShamirThreshold)
+		defer func() {
+			for _, s := range shares {
+				clear(s)
+			}
+		}()
+		if err != nil {
+			switch {
+			case errors.Is(err, barrier.ErrInvalidSealTarget):
+				httputil.WriteJSONError(w, http.StatusBadRequest, `target must be "shamir" or "tpm"`)
+			case errors.Is(err, barrier.ErrSealed), errors.Is(err, barrier.ErrSealAlreadyTarget), errors.Is(err, seal.ErrTPMAlreadyInitialized):
+				httputil.WriteJSONError(w, http.StatusConflict, err.Error())
+			case errors.Is(err, seal.ErrTPMUnavailable):
+				httputil.WriteJSONError(w, http.StatusServiceUnavailable, err.Error())
+			case errors.Is(err, barrier.ErrRootVerification), errors.Is(err, barrier.ErrSealModeMismatch):
+				// 기록과 설정이 어긋남: 자동으로 고치지 않고 멈춘다.
+				httputil.WriteJSONError(w, http.StatusInternalServerError, "initialization record and server state disagree; refusing to migrate")
+			default:
+				httputil.WriteJSONError(w, http.StatusInternalServerError, "seal migration failed: "+err.Error())
+			}
+			return
+		}
+		encoded := make([]string, len(shares))
+		for i, sh := range shares {
+			encoded[i] = base64.StdEncoding.EncodeToString(sh)
+		}
+		resp := sealMigrateResponse{
+			Previous: previous, SealType: req.Target,
+			Parts: deps.ShamirParts, Threshold: deps.ShamirThreshold, Shares: encoded,
+			Message: fmt.Sprintf("seal is now %q: %d shares issued, %d required. shares are shown only once and are not stored by the server — record them now.",
+				req.Target, len(encoded), deps.ShamirThreshold),
+		}
+		if previous == barrier.SealShamir && req.Target == barrier.SealShamir {
+			resp.Warning = sameRootWarning
+		}
+		httputil.WriteJSON(w, http.StatusOK, resp)
 	}
 }
 
